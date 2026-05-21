@@ -1,0 +1,20 @@
+{
+  "rewrites": [
+    {
+      "source": "/finance-tracker/assets/(.*)",
+      "destination": "/assets/$1"
+    },
+    {
+      "source": "/finance-tracker/favicon.svg",
+      "destination": "/favicon.svg"
+    },
+    {
+      "source": "/finance-tracker",
+      "destination": "/index.html"
+    },
+    {
+      "source": "/finance-tracker/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
