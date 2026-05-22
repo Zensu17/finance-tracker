@@ -5,6 +5,10 @@ import {
   Utensils, Home, Heart, Briefcase, Zap, Gift, MoreHorizontal,
   DollarSign, PiggyBank, CheckCircle2
 } from 'lucide-react'
+import { onAuthStateChanged, User } from 'firebase/auth'
+import { doc, setDoc, getDoc } from 'firebase/firestore'
+import { auth, db, signOutUser } from './firebase'
+import LoginScreen from './components/LoginScreen'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -15,7 +19,7 @@ type Category =
   | 'Shopping' | 'Utilities' | 'Entertainment' | 'Salary'
   | 'Freelance' | 'Investment' | 'Gift' | 'Other'
 
-interface Transaction {
+export interface Transaction {
   id: string
   type: TransactionType
   amount: number
@@ -25,7 +29,7 @@ interface Transaction {
   createdAt: number
 }
 
-interface Budget {
+export interface Budget {
   limit: number
   month: string // "YYYY-MM"
 }
@@ -548,20 +552,89 @@ function TransactionRow({ t, onDelete }: { t: Transaction; onDelete: (id: string
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const [transactions, setTransactions] = useState<Transaction[]>(() =>
-    loadFromStorage(STORAGE_KEYS.transactions, [])
-  )
-  const [budget, setBudget] = useState<Budget>(() =>
-    loadFromStorage(STORAGE_KEYS.budget, { limit: 0, month: currentMonth() })
-  )
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [budget, setBudget] = useState<Budget>({ limit: 0, month: currentMonth() })
   const [showModal, setShowModal] = useState(false)
   const [search, setSearch] = useState('')
   const [filterType, setFilterType] = useState<'all' | TransactionType>('all')
   const [filterCategory, setFilterCategory] = useState<Category | 'all'>('all')
+  const [user, setUser] = useState<User | null>(null)
+  const [loading, setLoading] = useState(true)
 
-  // Persist
-  useEffect(() => saveToStorage(STORAGE_KEYS.transactions, transactions), [transactions])
-  useEffect(() => saveToStorage(STORAGE_KEYS.budget, budget), [budget])
+  // Load data based on auth state
+  useEffect(() => {
+    if (!user) {
+      // Load from localStorage when not authenticated (guest mode)
+      setTransactions(() => loadFromStorage(STORAGE_KEYS.transactions, []))
+      setBudget(() => loadFromStorage(STORAGE_KEYS.budget, { limit: 0, month: currentMonth() }))
+      setLoading(false)
+      return
+    }
+
+    // Load from Firebase when authenticated
+    const loadUserData = async () => {
+      try {
+        // Load transactions
+        const transactionsDoc = await getDoc(doc(db, `users/${user.uid}/data`, 'transactions'))
+        if (transactionsDoc.exists()) {
+          setTransactions(transactionsDoc.data().items || [])
+        }
+
+        // Load budget
+        const budgetDoc = await getDoc(doc(db, `users/${user.uid}/data`, 'budget'))
+        if (budgetDoc.exists()) {
+          const budgetData = budgetDoc.data()
+          if (budgetData && budgetData.limit !== undefined && budgetData.month !== undefined) {
+            setBudget({ limit: budgetData.limit, month: budgetData.month })
+          } else {
+            setBudget({ limit: 0, month: currentMonth() })
+          }
+        }
+      } catch (error) {
+        console.error('Error loading user data:', error)
+        // Fallback to localStorage
+        setTransactions(() => loadFromStorage(STORAGE_KEYS.transactions, []))
+        setBudget(() => loadFromStorage(STORAGE_KEYS.budget, { limit: 0, month: currentMonth() }))
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    loadUserData()
+  }, [user])
+
+  // Persist data based on auth state
+  useEffect(() => {
+    if (!user) {
+      // Save to localStorage when not authenticated (guest mode)
+      saveToStorage(STORAGE_KEYS.transactions, transactions)
+      saveToStorage(STORAGE_KEYS.budget, budget)
+      return
+    }
+
+    // Save to Firebase when authenticated
+    const saveUserData = async () => {
+      try {
+        await setDoc(doc(db, `users/${user.uid}/data`, 'transactions'), {
+          items: transactions
+        })
+        await setDoc(doc(db, `users/${user.uid}/data`, 'budget'), budget)
+      } catch (error) {
+        console.error('Error saving user data:', error)
+      }
+    }
+
+    saveUserData()
+  }, [transactions, budget, user])
+
+  // Auth state listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setUser(user)
+      // Note: loading state is handled in the data loading effect
+    })
+    return unsubscribe
+  }, [auth])
 
   // Derived stats
   const totalIncome = useMemo(
@@ -620,122 +693,177 @@ export default function App() {
     setBudget({ limit, month: currentMonth() })
   }, [])
 
+  const handleSignOut = async () => {
+    if (window.confirm('Apakah Anda yakin ingin keluar?')) {
+      try {
+        await signOutUser()
+        // Auth state listener will automatically set user to null and show login screen
+      } catch (error) {
+        console.error('Error signing out:', error)
+        alert('Terjadi kesalahan saat keluar. Silakan coba lagi.')
+      }
+    }
+  }
+
   return (
     <div className="min-h-screen bg-stone-50">
-      {/* Header */}
-      <header className="bg-white border-b border-stone-100 sticky top-0 z-40">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 bg-stone-900 rounded-lg flex items-center justify-center">
-              <Wallet size={14} className="text-white" />
-            </div>
-            <span className="font-semibold text-stone-900 text-sm tracking-tight">FinanceTracker</span>
-          </div>
-          <button
-            onClick={() => setShowModal(true)}
-            className="flex items-center gap-1.5 bg-stone-900 text-white text-sm font-medium px-3.5 py-2 rounded-xl hover:bg-stone-800 transition-colors"
-          >
-            <Plus size={15} />
-            Add
-          </button>
+      {loading ? (
+        <div className="flex h-screen items-center justify-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-stone-900"></div>
         </div>
-      </header>
-
-      <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-6">
-        {/* Summary Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <SummaryCard label="Net Balance" amount={balance} icon={<Wallet size={16} />} variant="neutral" />
-          <SummaryCard label="Total Income" amount={totalIncome} icon={<TrendingUp size={16} />} variant="income" />
-          <SummaryCard label="Total Expenses" amount={totalExpenses} icon={<TrendingDown size={16} />} variant="expense" />
-        </div>
-
-        {/* Main Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left: Transactions */}
-          <div className="lg:col-span-2 space-y-4">
-            {/* Search & Filter Bar */}
-            <div className="bg-white rounded-2xl border border-stone-100 p-4">
-              <div className="flex flex-col sm:flex-row gap-3">
-                <div className="relative flex-1">
-                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
-                  <input
-                    type="text"
-                    placeholder="Search transactions…"
-                    value={search}
-                    onChange={e => setSearch(e.target.value)}
-                    className="w-full pl-9 pr-3 py-2 text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50"
-                  />
+      ) : !user ? (
+        // Show login screen when not authenticated
+        <LoginScreen onLogin={() => {}} />
+      ) : (
+        // Show main app when authenticated
+        <>
+          {/* Header */}
+          <header className="bg-white border-b border-stone-100 sticky top-0 z-40">
+            <div className="max-w-5xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 bg-stone-900 rounded-lg flex items-center justify-center">
+                  <Wallet size={14} className="text-white" />
                 </div>
-                <div className="flex gap-2">
-                  {/* Type filter */}
-                  <div className="relative">
-                    <select
-                      value={filterType}
-                      onChange={e => setFilterType(e.target.value as typeof filterType)}
-                      className="appearance-none pl-3 pr-8 py-2 text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 bg-stone-50 text-stone-700"
-                    >
-                      <option value="all">All types</option>
-                      <option value="income">Income</option>
-                      <option value="expense">Expense</option>
-                    </select>
-                    <ChevronDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none" />
-                  </div>
-                  {/* Category filter */}
-                  <div className="relative">
-                    <select
-                      value={filterCategory}
-                      onChange={e => setFilterCategory(e.target.value as Category | 'all')}
-                      className="appearance-none pl-3 pr-8 py-2 text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 bg-stone-50 text-stone-700"
-                    >
-                      <option value="all">All categories</option>
-                      {usedCategories.map(c => <option key={c} value={c}>{c}</option>)}
-                    </select>
-                    <ChevronDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none" />
-                  </div>
-                </div>
+                <span className="font-semibold text-stone-900 text-sm tracking-tight">FinanceTracker</span>
               </div>
-            </div>
-
-            {/* Transaction List */}
-            <div className="bg-white rounded-2xl border border-stone-100">
-              <div className="px-4 pt-4 pb-2 flex items-center justify-between">
-                <span className="text-sm font-medium text-stone-700">Transactions</span>
-                <span className="text-xs text-stone-400">{filtered.length} entries</span>
-              </div>
-              <div className="divide-y divide-stone-50 px-2 pb-2 max-h-[520px] overflow-y-auto scrollbar-thin">
-                {filtered.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-16 text-center">
-                    <div className="w-12 h-12 bg-stone-100 rounded-2xl flex items-center justify-center mb-3">
-                      <Wallet size={20} className="text-stone-400" />
+              <div className="flex items-center gap-4">
+                {/* User Info & Sign Out (only shown when authenticated) */}
+                {user && (
+                  <>
+                    <div className="flex items-center gap-3">
+                      {user.photoURL ? (
+                        <img
+                          src={user.photoURL}
+                          alt="User"
+                          className="h-8 w-8 rounded-full object-cover border-2 border-white"
+                        />
+                      ) : (
+                        <div className="h-8 w-8 bg-stone-900 rounded-full flex items-center justify-center">
+                          {user.displayName?.[0] ?? 'U'}
+                        </div>
+                      )}
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium text-stone-900">{user.displayName || 'User'}</p>
+                        <p className="text-xs text-stone-500">{user.email || ''}</p>
+                      </div>
                     </div>
-                    <p className="text-sm font-medium text-stone-500">No transactions found</p>
-                    <p className="text-xs text-stone-400 mt-1">
-                      {transactions.length === 0 ? 'Add your first transaction above' : 'Try adjusting your filters'}
-                    </p>
-                  </div>
-                ) : (
-                  filtered.map(t => (
-                    <TransactionRow key={t.id} t={t} onDelete={deleteTransaction} />
-                  ))
+                    <button
+                      onClick={handleSignOut}
+                      className="text-xs text-stone-400 hover:text-stone-700 transition-colors font-medium"
+                    >
+                      Keluar
+                    </button>
+                  </>
                 )}
+                {/* Add Transaction Button (always visible) */}
+                <button
+                  onClick={() => setShowModal(true)}
+                  className="flex items-center gap-1.5 bg-stone-900 text-white text-sm font-medium px-3.5 py-2 rounded-xl hover:bg-stone-800 transition-colors"
+                >
+                  <Plus size={15} />
+                  Add
+                </button>
               </div>
             </div>
-          </div>
+          </header>
 
-          {/* Right: Budget + Categories */}
-          <div className="space-y-4">
-            <BudgetPanel
-              budget={budget}
-              monthlyExpenses={monthlyExpenses}
-              onUpdate={updateBudget}
-            />
-            <CategoryBreakdown transactions={transactions} />
-          </div>
-        </div>
-      </main>
+          <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-6">
+            {/* Summary Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <SummaryCard label="Net Balance" amount={balance} icon={<Wallet size={16} />} variant="neutral" />
+              <SummaryCard label="Total Income" amount={totalIncome} icon={<TrendingUp size={16} />} variant="income" />
+              <SummaryCard label="Total Expenses" amount={totalExpenses} icon={<TrendingDown size={16} />} variant="expense" />
+            </div>
 
-      {showModal && (
-        <AddTransactionModal onClose={() => setShowModal(false)} onAdd={addTransaction} />
+            {/* Main Grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Left: Transactions */}
+              <div className="lg:col-span-2 space-y-4">
+                {/* Search & Filter Bar */}
+                <div className="bg-white rounded-2xl border border-stone-100 p-4">
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <div className="relative flex-1">
+                      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+                      <input
+                        type="text"
+                        placeholder="Search transactions…"
+                        value={search}
+                        onChange={e => setSearch(e.target.value)}
+                        className="w-full pl-9 pr-3 py-2 text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50"
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      {/* Type filter */}
+                      <div className="relative">
+                        <select
+                          value={filterType}
+                          onChange={e => setFilterType(e.target.value as typeof filterType)}
+                          className="appearance-none pl-3 pr-8 py-2 text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 bg-stone-50 text-stone-700"
+                        >
+                          <option value="all">All types</option>
+                          <option value="income">Income</option>
+                          <option value="expense">Expense</option>
+                        </select>
+                        <ChevronDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none" />
+                      </div>
+                      {/* Category filter */}
+                      <div className="relative">
+                        <select
+                          value={filterCategory}
+                          onChange={e => setFilterCategory(e.target.value as Category | 'all')}
+                          className="appearance-none pl-3 pr-8 py-2 text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 bg-stone-50 text-stone-700"
+                        >
+                          <option value="all">All categories</option>
+                          {usedCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                        <ChevronDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Transaction List */}
+                <div className="bg-white rounded-2xl border border-stone-100">
+                  <div className="px-4 pt-4 pb-2 flex items-center justify-between">
+                    <span className="text-sm font-medium text-stone-700">Transactions</span>
+                    <span className="text-xs text-stone-400">{filtered.length} entries</span>
+                  </div>
+                  <div className="divide-y divide-stone-50 px-2 pb-2 max-h-[520px] overflow-y-auto scrollbar-thin">
+                    {filtered.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center py-16 text-center">
+                        <div className="w-12 h-12 bg-stone-100 rounded-2xl flex items-center justify-center mb-3">
+                          <Wallet size={20} className="text-stone-400" />
+                        </div>
+                        <p className="text-sm font-medium text-stone-500">No transactions found</p>
+                        <p className="text-xs text-stone-400 mt-1">
+                          {transactions.length === 0 ? 'Add your first transaction above' : 'Try adjusting your filters'}
+                        </p>
+                      </div>
+                    ) : (
+                      filtered.map(t => (
+                        <TransactionRow key={t.id} t={t} onDelete={deleteTransaction} />
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Right: Budget + Categories */}
+              <div className="space-y-4">
+                <BudgetPanel
+                  budget={budget}
+                  monthlyExpenses={monthlyExpenses}
+                  onUpdate={updateBudget}
+                />
+                <CategoryBreakdown transactions={transactions} />
+              </div>
+            </div>
+          </main>
+
+          {showModal && (
+            <AddTransactionModal onClose={() => setShowModal(false)} onAdd={addTransaction} />
+          )}
+        </>
       )}
     </div>
   )
