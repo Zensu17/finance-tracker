@@ -699,8 +699,14 @@ export default function App() {
   const handleSignOut = async () => {
     if (window.confirm('Apakah Anda yakin ingin keluar?')) {
       try {
-        await signOutUser()
-        // Auth state listener will automatically set user to null and show login screen
+        if (user) {
+          // Firebase user - sign out from Firebase
+          await signOutUser()
+          // Auth state listener will set user to null
+        } else if (isGuest) {
+          // Guest user - just reset guest state
+          setIsGuest(false)
+        }
       } catch (error) {
         console.error('Error signing out:', error)
         alert('Terjadi kesalahan saat keluar. Silakan coba lagi.')
