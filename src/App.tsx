@@ -704,8 +704,13 @@ export default function App() {
           await signOutUser()
           // Auth state listener will set user to null
         } else if (isGuest) {
-          // Guest user - just reset guest state
+          // Guest user - clear persisted guest data from localStorage
+          localStorage.removeItem(STORAGE_KEYS.transactions)
+          localStorage.removeItem(STORAGE_KEYS.budget)
+          // Reset states
+          setUser(null)
           setIsGuest(false)
+          // Note: data loading effect will load empty/default values from localStorage
         }
       } catch (error) {
         console.error('Error signing out:', error)
@@ -750,6 +755,12 @@ export default function App() {
                         <p className="text-xs text-stone-500">Data disimpan secara lokal</p>
                       </div>
                     </div>
+                    <button
+                      onClick={handleSignOut}
+                      className="text-xs text-stone-400 hover:text-stone-700 transition-colors font-medium"
+                    >
+                      Keluar
+                    </button>
                   </>
                 ) : user ? (
                   <>
