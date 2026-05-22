@@ -3,9 +3,10 @@ import { signInWithGoogle } from '../firebase';
 
 interface LoginScreenProps {
   onLogin: () => void;
+  onGuest: () => void;
 }
 
-export default function LoginScreen({ onLogin }: LoginScreenProps) {
+export default function LoginScreen({ onLogin, onGuest }: LoginScreenProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,8 +25,7 @@ export default function LoginScreen({ onLogin }: LoginScreenProps) {
   };
 
   const handleGuestMode = () => {
-    // Guest mode - just proceed without authentication
-    onLogin();
+    onGuest();
   };
 
   return (

@@ -559,19 +559,21 @@ export default function App() {
   const [filterType, setFilterType] = useState<'all' | TransactionType>('all')
   const [filterCategory, setFilterCategory] = useState<Category | 'all'>('all')
   const [user, setUser] = useState<User | null>(null)
+  const [isGuest, setIsGuest] = useState(false)
   const [loading, setLoading] = useState(true)
 
   // Load data based on auth state
   useEffect(() => {
-    if (!user) {
-      // Load from localStorage when not authenticated (guest mode)
+    // Guest mode: treat as not authenticated for data purposes (use localStorage)
+    if (!user || isGuest) {
+      // Load from localStorage when not authenticated or guest mode
       setTransactions(() => loadFromStorage(STORAGE_KEYS.transactions, []))
       setBudget(() => loadFromStorage(STORAGE_KEYS.budget, { limit: 0, month: currentMonth() }))
       setLoading(false)
       return
     }
 
-    // Load from Firebase when authenticated
+    // Load from Firebase when authenticated (and not guest)
     const loadUserData = async () => {
       try {
         // Load transactions
@@ -601,18 +603,19 @@ export default function App() {
     }
 
     loadUserData()
-  }, [user])
+  }, [user, isGuest])
 
   // Persist data based on auth state
   useEffect(() => {
-    if (!user) {
-      // Save to localStorage when not authenticated (guest mode)
+    // Guest mode: treat as not authenticated for persistence purposes (use localStorage)
+    if (!user || isGuest) {
+      // Save to localStorage when not authenticated or guest mode
       saveToStorage(STORAGE_KEYS.transactions, transactions)
       saveToStorage(STORAGE_KEYS.budget, budget)
       return
     }
 
-    // Save to Firebase when authenticated
+    // Save to Firebase when authenticated (and not guest)
     const saveUserData = async () => {
       try {
         await setDoc(doc(db, `users/${user.uid}/data`, 'transactions'), {
@@ -625,7 +628,7 @@ export default function App() {
     }
 
     saveUserData()
-  }, [transactions, budget, user])
+  }, [transactions, budget, user, isGuest])
 
   // Auth state listener
   useEffect(() => {
@@ -711,11 +714,14 @@ export default function App() {
         <div className="flex h-screen items-center justify-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-stone-900"></div>
         </div>
-      ) : !user ? (
-        // Show login screen when not authenticated
-        <LoginScreen onLogin={() => {}} />
+      ) : !user && !isGuest ? (
+        // Show login screen when not authenticated and not in guest mode
+        <LoginScreen
+          onLogin={() => {}}
+          onGuest={() => setIsGuest(true)}
+        />
       ) : (
-        // Show main app when authenticated
+        // Show main app when authenticated or in guest mode
         <>
           {/* Header */}
           <header className="bg-white border-b border-stone-100 sticky top-0 z-40">
@@ -727,8 +733,19 @@ export default function App() {
                 <span className="font-semibold text-stone-900 text-sm tracking-tight">FinanceTracker</span>
               </div>
               <div className="flex items-center gap-4">
-                {/* User Info & Sign Out (only shown when authenticated) */}
-                {user && (
+                {/* User Info & Sign Out */}
+                {(!user && isGuest) ? (
+                  <>
+                    <div className="flex items-center gap-3">
+                      <div className="h-8 w-8 bg-stone-900 rounded-full flex items-center justify-center">
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-sm font-medium text-stone-900">Pengguna Tamu</p>
+                        <p className="text-xs text-stone-500">Data disimpan secara lokal</p>
+                      </div>
+                    </div>
+                  </>
+                ) : user ? (
                   <>
                     <div className="flex items-center gap-3">
                       {user.photoURL ? (
@@ -754,7 +771,7 @@ export default function App() {
                       Keluar
                     </button>
                   </>
-                )}
+                ) : null}
                 {/* Add Transaction Button (always visible) */}
                 <button
                   onClick={() => setShowModal(true)}
