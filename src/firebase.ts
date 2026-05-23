@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
-import { getFirestore, collection, addDoc, query, getDocs, updateDoc, doc, deleteDoc, orderBy } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, query, getDocs, updateDoc, doc, deleteDoc, orderBy, setDoc, getDoc } from 'firebase/firestore';
 import type { Transaction, Budget } from './App';
 
 // Firebase configuration - replace with your own Firebase project config
@@ -35,13 +35,29 @@ export const signOutUser = async () => {
   await signOut(auth);
 };
 
-// Transaction services
-export const addTransaction = async (transaction: Omit<Transaction, 'id' | 'createdAt'>, userId: string) => {
-  const docRef = await addDoc(collection(db, 'users', userId, 'transactions'), {
-    ...transaction,
-    createdAt: Date.now()
-  });
-  return { id: docRef.id, ...transaction, createdAt: Date.now() };
+// Transaction services - Updated to match App.tsx structure
+export const saveTransactionsToFirestore = async (userId: string, transactions: any[]) => {
+  try {
+    const docRef = doc(db, `users/${userId}/data`, 'transactions');
+    await setDoc(docRef, { items: transactions }, { merge: true });
+  } catch (error) {
+    console.error('Error saving transactions to Firestore:', error);
+    throw error;
+  }
+};
+
+export const loadTransactionsFromFirestore = async (userId: string) => {
+  try {
+    const docRef = doc(db, `users/${userId}/data`, 'transactions');
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      return docSnap.data().items || [];
+    }
+    return [];
+  } catch (error) {
+    console.error('Error loading transactions from Firestore:', error);
+    throw error;
+  }
 };
 
 export const getTransactions = async (userId: string) => {

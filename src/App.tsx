@@ -572,7 +572,7 @@ export default function App() {
       return
     }
 
-    // Authenticated user: set up Firestore listeners
+    // Authenticated user: set up Firestore listeners with proper error handling
     setLoading(true)
     const transactionsRef = doc(db, `users/${user.uid}/data`, 'transactions')
     const budgetRef = doc(db, `users/${user.uid}/data`, 'budget')
@@ -580,15 +580,23 @@ export default function App() {
     const unsubscribeTransactions = onSnapshot(
       transactionsRef,
       (docSnap) => {
-        if (docSnap.exists()) {
-          setTransactions(docSnap.data().items || [])
-        } else {
+        try {
+          if (docSnap.exists()) {
+            const data = docSnap.data()
+            setTransactions(data.items || [])
+            console.log('✓ Transactions loaded from Firestore:', data.items?.length || 0)
+          } else {
+            console.log('No transactions document found, starting fresh')
+            setTransactions([])
+          }
+        } catch (error) {
+          console.error('Error processing transactions snapshot:', error)
           setTransactions([])
         }
         setLoading(false)
       },
       (error) => {
-        console.error('Error fetching transactions:', error)
+        console.error('✗ Error listening to transactions:', error)
         setLoading(false)
         // Fallback to localStorage
         setTransactions(() => loadFromStorage(STORAGE_KEYS.transactions, []))
@@ -598,20 +606,29 @@ export default function App() {
     const unsubscribeBudget = onSnapshot(
       budgetRef,
       (docSnap) => {
-        if (docSnap.exists()) {
-          const data = docSnap.data()
-          if (data && data.limit !== undefined && data.month !== undefined) {
-            setBudget({ limit: data.limit, month: data.month })
+        try {
+          if (docSnap.exists()) {
+            const data = docSnap.data()
+            if (data && data.limit !== undefined && data.month !== undefined) {
+              setBudget({ limit: data.limit, month: data.month })
+              console.log('✓ Budget loaded from Firestore')
+            } else {
+              setBudget({ limit: 0, month: currentMonth() })
+            }
           } else {
+            console.log('No budget document found, starting fresh')
             setBudget({ limit: 0, month: currentMonth() })
           }
-        } else {
+        } catch (error) {
+          console.error('Error processing budget snapshot:', error)
           setBudget({ limit: 0, month: currentMonth() })
         }
       },
       (error) => {
-        console.error('Error fetching budget:', error)
-        setBudget({ limit: 0, month: currentMonth() })
+        console.error('✗ Error listening to budget:', error)
+        // Fallback to localStorage
+        const cachedBudget = loadFromStorage(STORAGE_KEYS.budget, { limit: 0, month: currentMonth() })
+        setBudget(cachedBudget)
       }
     )
 
@@ -633,16 +650,32 @@ export default function App() {
     // Authenticated user: persist to Firestore
     const persistUserData = async () => {
       try {
-        await setDoc(doc(db, `users/${user.uid}/data`, 'transactions'), {
-          items: transactions
-        })
-        await setDoc(doc(db, `users/${user.uid}/data`, 'budget'), budget)
+        // Save both documents with error handling
+        await Promise.all([
+          setDoc(doc(db, `users/${user.uid}/data`, 'transactions'), {
+            items: transactions,
+            updatedAt: Date.now()
+          }, { merge: true }),
+          setDoc(doc(db, `users/${user.uid}/data`, 'budget'), {
+            ...budget,
+            updatedAt: Date.now()
+          }, { merge: true })
+        ])
+        console.log('✓ Data persisted to Firestore successfully')
       } catch (error) {
-        console.error('Error saving user data:', error)
+        console.error('✗ Error saving user data to Firestore:', error)
+        // Fallback: also save to localStorage as backup
+        saveToStorage(STORAGE_KEYS.transactions, transactions)
+        saveToStorage(STORAGE_KEYS.budget, budget)
       }
     }
 
-    persistUserData()
+    // Debounce: avoid too many writes if state changes rapidly
+    const debounceTimer = setTimeout(() => {
+      persistUserData()
+    }, 500)
+
+    return () => clearTimeout(debounceTimer)
   }, [transactions, budget, user, isGuest])
 
   // Auth state listener
@@ -695,16 +728,29 @@ export default function App() {
   }, [transactions, filterType, filterCategory, search])
 
   const addTransaction = useCallback((data: Omit<Transaction, 'id' | 'createdAt'>) => {
-    const t: Transaction = {
-      ...data,
-      id: crypto.randomUUID(),
-      createdAt: Date.now(),
+    try {
+      const t: Transaction = {
+        ...data,
+        id: crypto.randomUUID(),
+        createdAt: Date.now(),
+      }
+      setTransactions(prev => [t, ...prev])
+      console.log('✓ Transaction added:', t.id)
+    } catch (error) {
+      console.error('✗ Error adding transaction:', error)
     }
-    setTransactions(prev => [t, ...prev])
   }, [])
 
   const deleteTransaction = useCallback((id: string) => {
-    setTransactions(prev => prev.filter(t => t.id !== id))
+    try {
+      setTransactions(prev => {
+        const newTransactions = prev.filter(t => t.id !== id)
+        console.log('✓ Transaction deleted:', id)
+        return newTransactions
+      })
+    } catch (error) {
+      console.error('✗ Error deleting transaction:', error)
+    }
   }, [])
 
   const updateBudget = useCallback((limit: number) => {
