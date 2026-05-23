@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import { toast, Toaster } from 'sonner'
 import {
   Plus, Trash2, Search, TrendingUp, TrendingDown, Wallet,
   ChevronDown, X, SlidersHorizontal, ShoppingCart, Car,
@@ -123,30 +124,6 @@ function fmtDate(dateStr: string): string {
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
-
-// Toast Notification Component
-function Toast({ type, message, onClose }: {
-  type: 'success' | 'error'
-  message: string
-  onClose: () => void
-}) {
-  useEffect(() => {
-    const timer = setTimeout(onClose, 3000)
-    return () => clearTimeout(timer)
-  }, [onClose])
-
-  const bgColor = type === 'success' ? 'bg-emerald-50' : 'bg-rose-50'
-  const textColor = type === 'success' ? 'text-emerald-700' : 'text-rose-700'
-  const borderColor = type === 'success' ? 'border-emerald-200' : 'border-rose-200'
-
-  return (
-    <div className={`fixed top-4 right-4 left-4 md:left-auto md:w-96 ${bgColor} border ${borderColor} rounded-xl px-4 py-3 shadow-lg animate-in fade-in slide-in-from-top-2 duration-300 z-50`}>
-      <p className={`text-sm font-medium ${textColor}`}>
-        {type === 'success' ? '✓' : '✕'} {message}
-      </p>
-    </div>
-  )
-}
 
 function SummaryCard({
   label, amount, icon, variant
@@ -752,7 +729,6 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null)
   const [isGuest, setIsGuest] = useState(false)
   const [loading, setLoading] = useState(true)
-  const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
   // Load data and set up real-time listeners
   useEffect(() => {
@@ -927,11 +903,11 @@ export default function App() {
         createdAt: Date.now(),
       }
       setTransactions(prev => [t, ...prev])
-      setToast({ type: 'success', message: 'Transaction added successfully!' })
+      toast.success('✓ Transaction added successfully!')
       console.log('✓ Transaction added:', t.id)
     } catch (error) {
       console.error('✗ Error adding transaction:', error)
-      setToast({ type: 'error', message: 'Failed to add transaction' })
+      toast.error('✗ Failed to add transaction')
     }
   }, [])
 
@@ -942,10 +918,10 @@ export default function App() {
         console.log('✓ Transaction deleted:', id)
         return newTransactions
       })
-      setToast({ type: 'success', message: 'Transaction deleted!' })
+      toast.success('✓ Transaction deleted!')
     } catch (error) {
       console.error('✗ Error deleting transaction:', error)
-      setToast({ type: 'error', message: 'Failed to delete transaction' })
+      toast.error('✗ Failed to delete transaction')
     }
   }, [])
 
@@ -954,11 +930,11 @@ export default function App() {
       setTransactions(prev =>
         prev.map(t => t.id === updatedTransaction.id ? updatedTransaction : t)
       )
-      setToast({ type: 'success', message: 'Transaction updated successfully!' })
+      toast.success('✓ Transaction updated successfully!')
       console.log('✓ Transaction updated:', updatedTransaction.id)
     } catch (error) {
       console.error('✗ Error updating transaction:', error)
-      setToast({ type: 'error', message: 'Failed to update transaction' })
+      toast.error('✗ Failed to update transaction')
     }
   }, [])
 
@@ -991,6 +967,12 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-stone-50">
+      <Toaster 
+        position="top-right" 
+        richColors 
+        closeButton
+        duration={3000}
+      />
       {loading ? (
         <div className="flex h-screen items-center justify-center">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-stone-900"></div>
@@ -1180,14 +1162,6 @@ export default function App() {
               transaction={editingTransaction}
               onClose={() => setEditingTransaction(null)}
               onSave={editTransaction}
-            />
-          )}
-
-          {toast && (
-            <Toast
-              type={toast.type}
-              message={toast.message}
-              onClose={() => setToast(null)}
             />
           )}
         </>
