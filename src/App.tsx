@@ -6,7 +6,7 @@ import {
   DollarSign, PiggyBank, CheckCircle2
 } from 'lucide-react'
 import { onAuthStateChanged, User } from 'firebase/auth'
-import { doc, setDoc, getDoc, onSnapshot } from 'firebase/firestore'
+import { doc, setDoc, onSnapshot } from 'firebase/firestore'
 import { auth, db, signOutUser } from './firebase'
 import LoginScreen from './components/LoginScreen'
 
@@ -267,7 +267,7 @@ function AddTransactionModal({
                 step="0.01"
                 placeholder="0.00"
                 value={form.amount}
-                onChange={e => setForm(f => ({ ...f, amount: e.target.value }))}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, amount: e.target.value }))}
                 className="w-full pl-7 pr-3 py-2.5 text-sm font-mono border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50"
               />
             </div>
@@ -279,7 +279,7 @@ function AddTransactionModal({
             <div className="relative">
               <select
                 value={form.category}
-                onChange={e => setForm(f => ({ ...f, category: e.target.value as Category }))}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setForm(f => ({ ...f, category: e.target.value as Category }))}
                 className="w-full px-3 py-2.5 text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50 appearance-none pr-8"
               >
                 {categories.map(c => <option key={c} value={c}>{c}</option>)}
@@ -294,7 +294,7 @@ function AddTransactionModal({
             <input
               type="date"
               value={form.date}
-              onChange={e => setForm(f => ({ ...f, date: e.target.value }))}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, date: e.target.value }))}
               className="w-full px-3 py-2.5 text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50"
             />
           </div>
@@ -306,7 +306,7 @@ function AddTransactionModal({
               type="text"
               placeholder="What was this for?"
               value={form.description}
-              onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, description: e.target.value }))}
               className="w-full px-3 py-2.5 text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50"
             />
           </div>
@@ -380,10 +380,10 @@ function BudgetPanel({ budget, monthlyExpenses, onUpdate }: {
             <input
               type="number"
               value={input}
-              onChange={e => setInput(e.target.value)}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setInput(e.target.value)}
               className="w-full pl-7 pr-3 py-2 text-sm font-mono border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 bg-stone-50"
               autoFocus
-              onKeyDown={e => e.key === 'Enter' && handleSave()}
+              onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => e.key === 'Enter' && handleSave()}
             />
           </div>
           <button
@@ -837,7 +837,7 @@ export default function App() {
                         type="text"
                         placeholder="Search transactions…"
                         value={search}
-                        onChange={e => setSearch(e.target.value)}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearch(e.target.value)}
                         className="w-full pl-9 pr-3 py-2 text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50"
                       />
                     </div>
@@ -846,7 +846,7 @@ export default function App() {
                       <div className="relative">
                         <select
                           value={filterType}
-                          onChange={e => setFilterType(e.target.value as typeof filterType)}
+                          onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setFilterType(e.target.value as typeof filterType)}
                           className="appearance-none pl-3 pr-8 py-2 text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 bg-stone-50 text-stone-700"
                         >
                           <option value="all">All types</option>
@@ -859,7 +859,7 @@ export default function App() {
                       <div className="relative">
                         <select
                           value={filterCategory}
-                          onChange={e => setFilterCategory(e.target.value as Category | 'all')}
+                          onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setFilterCategory(e.target.value as Category | 'all')}
                           className="appearance-none pl-3 pr-8 py-2 text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 bg-stone-50 text-stone-700"
                         >
                           <option value="all">All categories</option>
