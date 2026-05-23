@@ -6,7 +6,7 @@ import {
   DollarSign, PiggyBank, CheckCircle2
 } from 'lucide-react'
 import { onAuthStateChanged, User } from 'firebase/auth'
-import { doc, setDoc, getDoc } from 'firebase/firestore'
+import { doc, setDoc, getDoc, onSnapshot } from 'firebase/firestore'
 import { auth, db, signOutUser } from './firebase'
 import LoginScreen from './components/LoginScreen'
 
@@ -562,61 +562,76 @@ export default function App() {
   const [isGuest, setIsGuest] = useState(false)
   const [loading, setLoading] = useState(true)
 
-  // Load data based on auth state
+  // Load data and set up real-time listeners
   useEffect(() => {
-    // Guest mode: treat as not authenticated for data purposes (use localStorage)
     if (!user || isGuest) {
-      // Load from localStorage when not authenticated or guest mode
+      // Guest or no user: load from localStorage
       setTransactions(() => loadFromStorage(STORAGE_KEYS.transactions, []))
       setBudget(() => loadFromStorage(STORAGE_KEYS.budget, { limit: 0, month: currentMonth() }))
       setLoading(false)
       return
     }
 
-    // Load from Firebase when authenticated (and not guest)
-    const loadUserData = async () => {
-      try {
-        // Load transactions
-        const transactionsDoc = await getDoc(doc(db, `users/${user.uid}/data`, 'transactions'))
-        if (transactionsDoc.exists()) {
-          setTransactions(transactionsDoc.data().items || [])
-        }
+    // Authenticated user: set up Firestore listeners
+    setLoading(true)
+    const transactionsRef = doc(db, `users/${user.uid}/data`, 'transactions')
+    const budgetRef = doc(db, `users/${user.uid}/data`, 'budget')
 
-        // Load budget
-        const budgetDoc = await getDoc(doc(db, `users/${user.uid}/data`, 'budget'))
-        if (budgetDoc.exists()) {
-          const budgetData = budgetDoc.data()
-          if (budgetData && budgetData.limit !== undefined && budgetData.month !== undefined) {
-            setBudget({ limit: budgetData.limit, month: budgetData.month })
+    const unsubscribeTransactions = onSnapshot(
+      transactionsRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          setTransactions(docSnap.data().items || [])
+        } else {
+          setTransactions([])
+        }
+        setLoading(false)
+      },
+      (error) => {
+        console.error('Error fetching transactions:', error)
+        setLoading(false)
+        // Fallback to localStorage
+        setTransactions(() => loadFromStorage(STORAGE_KEYS.transactions, []))
+      }
+    )
+
+    const unsubscribeBudget = onSnapshot(
+      budgetRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data()
+          if (data && data.limit !== undefined && data.month !== undefined) {
+            setBudget({ limit: data.limit, month: data.month })
           } else {
             setBudget({ limit: 0, month: currentMonth() })
           }
+        } else {
+          setBudget({ limit: 0, month: currentMonth() })
         }
-      } catch (error) {
-        console.error('Error loading user data:', error)
-        // Fallback to localStorage
-        setTransactions(() => loadFromStorage(STORAGE_KEYS.transactions, []))
-        setBudget(() => loadFromStorage(STORAGE_KEYS.budget, { limit: 0, month: currentMonth() }))
-      } finally {
-        setLoading(false)
+      },
+      (error) => {
+        console.error('Error fetching budget:', error)
+        setBudget({ limit: 0, month: currentMonth() })
       }
-    }
+    )
 
-    loadUserData()
+    return () => {
+      unsubscribeTransactions()
+      unsubscribeBudget()
+    }
   }, [user, isGuest])
 
   // Persist data based on auth state
   useEffect(() => {
-    // Guest mode: treat as not authenticated for persistence purposes (use localStorage)
     if (!user || isGuest) {
-      // Save to localStorage when not authenticated or guest mode
+      // Guest or no user: persist to localStorage
       saveToStorage(STORAGE_KEYS.transactions, transactions)
       saveToStorage(STORAGE_KEYS.budget, budget)
       return
     }
 
-    // Save to Firebase when authenticated (and not guest)
-    const saveUserData = async () => {
+    // Authenticated user: persist to Firestore
+    const persistUserData = async () => {
       try {
         await setDoc(doc(db, `users/${user.uid}/data`, 'transactions'), {
           items: transactions
@@ -627,7 +642,7 @@ export default function App() {
       }
     }
 
-    saveUserData()
+    persistUserData()
   }, [transactions, budget, user, isGuest])
 
   // Auth state listener
