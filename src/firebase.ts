@@ -70,8 +70,25 @@ export const getTransactions = async (userId: string) => {
 };
 
 export const updateTransaction = async (userId: string, transactionId: string, updates: Partial<Transaction>) => {
-  const docRef = doc(db, 'users', userId, 'transactions', transactionId);
-  await updateDoc(docRef, updates);
+  try {
+    const docRef = doc(db, `users/${userId}/data`, 'transactions');
+    const docSnap = await getDoc(docRef);
+    
+    if (docSnap.exists()) {
+      const items = docSnap.data().items || [];
+      const updatedItems = items.map((t: Transaction) =>
+        t.id === transactionId ? { ...t, ...updates } : t
+      );
+      
+      await setDoc(docRef, { items: updatedItems }, { merge: true });
+      console.log('✓ Transaction updated:', transactionId);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('✗ Error updating transaction:', error);
+    throw error;
+  }
 };
 
 export const deleteTransaction = async (userId: string, transactionId: string) => {

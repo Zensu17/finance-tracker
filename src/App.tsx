@@ -3,7 +3,7 @@ import {
   Plus, Trash2, Search, TrendingUp, TrendingDown, Wallet,
   ChevronDown, X, SlidersHorizontal, ShoppingCart, Car,
   Utensils, Home, Heart, Briefcase, Zap, Gift, MoreHorizontal,
-  DollarSign, PiggyBank, CheckCircle2
+  DollarSign, PiggyBank, CheckCircle2, Edit2
 } from 'lucide-react'
 import { onAuthStateChanged, User } from 'firebase/auth'
 import { doc, setDoc, onSnapshot } from 'firebase/firestore'
@@ -123,6 +123,30 @@ function fmtDate(dateStr: string): string {
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
+
+// Toast Notification Component
+function Toast({ type, message, onClose }: {
+  type: 'success' | 'error'
+  message: string
+  onClose: () => void
+}) {
+  useEffect(() => {
+    const timer = setTimeout(onClose, 3000)
+    return () => clearTimeout(timer)
+  }, [onClose])
+
+  const bgColor = type === 'success' ? 'bg-emerald-50' : 'bg-rose-50'
+  const textColor = type === 'success' ? 'text-emerald-700' : 'text-rose-700'
+  const borderColor = type === 'success' ? 'border-emerald-200' : 'border-rose-200'
+
+  return (
+    <div className={`fixed top-4 right-4 left-4 md:left-auto md:w-96 ${bgColor} border ${borderColor} rounded-xl px-4 py-3 shadow-lg animate-in fade-in slide-in-from-top-2 duration-300 z-50`}>
+      <p className={`text-sm font-medium ${textColor}`}>
+        {type === 'success' ? '✓' : '✕'} {message}
+      </p>
+    </div>
+  )
+}
 
 function SummaryCard({
   label, amount, icon, variant
@@ -335,6 +359,162 @@ function AddTransactionModal({
   )
 }
 
+// ─── Edit Transaction Modal ────────────────────────────────────────────────────
+
+function EditTransactionModal({
+  onClose, onSave, transaction
+}: {
+  onClose: () => void
+  onSave: (t: Transaction) => void
+  transaction: Transaction
+}) {
+  const [form, setForm] = useState({
+    type: transaction.type,
+    amount: String(transaction.amount),
+    category: transaction.category,
+    date: transaction.date,
+    description: transaction.description,
+  })
+  const [error, setError] = useState('')
+
+  const categories = form.type === 'expense' ? EXPENSE_CATEGORIES : INCOME_CATEGORIES
+
+  function handleTypeChange(type: TransactionType) {
+    const defaultCat = type === 'expense' ? 'Food & Dining' : 'Salary'
+    setForm(f => ({ ...f, type, category: defaultCat }))
+  }
+
+  function handleSubmit() {
+    const amount = parseFloat(form.amount)
+    if (!form.amount || isNaN(amount) || amount <= 0) {
+      setError('Enter a valid amount greater than 0.')
+      return
+    }
+    if (!form.description.trim()) {
+      setError('Description is required.')
+      return
+    }
+    onSave({
+      ...transaction,
+      type: form.type,
+      amount,
+      category: form.category,
+      date: form.date,
+      description: form.description.trim(),
+    })
+    onClose()
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/30 backdrop-blur-sm px-4">
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-xl max-h-[90vh] sm:max-h-auto overflow-y-auto sm:overflow-visible">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-stone-100 sticky top-0 bg-white">
+          <h2 className="font-semibold text-stone-900 text-base md:text-lg">Edit Transaction</h2>
+          <button onClick={onClose} className="w-10 h-10 md:w-8 md:h-8 rounded-lg hover:bg-stone-100 flex items-center justify-center text-stone-400 hover:text-stone-600 transition-colors active:scale-95">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="px-6 py-5 space-y-5">
+          {/* Type toggle */}
+          <div className="flex rounded-xl bg-stone-100 p-1 gap-1">
+            {(['expense', 'income'] as TransactionType[]).map(t => (
+              <button
+                key={t}
+                onClick={() => handleTypeChange(t)}
+                className={`flex-1 py-3 md:py-2 text-base md:text-sm font-medium rounded-lg transition-all active:scale-95 ${
+                  form.type === t
+                    ? t === 'expense'
+                      ? 'bg-white text-rose-600 shadow-sm'
+                      : 'bg-white text-emerald-600 shadow-sm'
+                    : 'text-stone-500 hover:text-stone-700'
+                }`}
+              >
+                {t.charAt(0).toUpperCase() + t.slice(1)}
+              </button>
+            ))}
+          </div>
+
+          {/* Amount */}
+          <div>
+            <label className="block text-xs font-medium text-stone-500 mb-2">Amount</label>
+            <div className="relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 font-mono text-base md:text-sm">Rp</span>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="0.00"
+                value={form.amount}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, amount: e.target.value }))}
+                className="w-full pl-7 pr-3 py-3 md:py-2.5 text-base md:text-sm font-mono border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50"
+              />
+            </div>
+          </div>
+
+          {/* Category */}
+          <div>
+            <label className="block text-xs font-medium text-stone-500 mb-2">Category</label>
+            <div className="relative">
+              <select
+                value={form.category}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setForm(f => ({ ...f, category: e.target.value as Category }))}
+                className="w-full px-3 py-3 md:py-2.5 text-base md:text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50 appearance-none pr-8"
+              >
+                {categories.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none" />
+            </div>
+          </div>
+
+          {/* Date */}
+          <div>
+            <label className="block text-xs font-medium text-stone-500 mb-2">Date</label>
+            <input
+              type="date"
+              value={form.date}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, date: e.target.value }))}
+              className="w-full px-3 py-3 md:py-2.5 text-base md:text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50"
+            />
+          </div>
+
+          {/* Description */}
+          <div>
+            <label className="block text-xs font-medium text-stone-500 mb-2">Description</label>
+            <input
+              type="text"
+              placeholder="What was this for?"
+              value={form.description}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, description: e.target.value }))}
+              className="w-full px-3 py-3 md:py-2.5 text-base md:text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50"
+            />
+          </div>
+
+          {error && (
+            <p className="text-xs text-rose-500 bg-rose-50 px-3 py-2 rounded-lg">{error}</p>
+          )}
+        </div>
+
+        <div className="px-6 pb-6 flex gap-3 sticky bottom-0 bg-white">
+          <button
+            onClick={onClose}
+            className="flex-1 py-3 md:py-2.5 text-base md:text-sm font-medium text-stone-600 bg-stone-100 hover:bg-stone-200 rounded-xl transition-colors active:scale-95 min-h-12 md:min-h-auto"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            className="flex-1 py-3 md:py-2.5 text-base md:text-sm font-medium text-white bg-stone-900 hover:bg-stone-800 rounded-xl transition-colors active:scale-95 min-h-12 md:min-h-auto"
+          >
+            Update Transaction
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Budget Panel ─────────────────────────────────────────────────────────────
 
 function BudgetPanel({ budget, monthlyExpenses, onUpdate }: {
@@ -500,7 +680,7 @@ function CategoryBreakdown({ transactions }: { transactions: Transaction[] }) {
 
 // ─── Transaction Row ──────────────────────────────────────────────────────────
 
-function TransactionRow({ t, onDelete }: { t: Transaction; onDelete: (id: string) => void }) {
+function TransactionRow({ t, onDelete, onEdit }: { t: Transaction; onDelete: (id: string) => void; onEdit: (transaction: Transaction) => void }) {
   const [confirm, setConfirm] = useState(false)
 
   return (
@@ -517,7 +697,7 @@ function TransactionRow({ t, onDelete }: { t: Transaction; onDelete: (id: string
           <span className="text-xs text-stone-400">{fmtDate(t.date)}</span>
         </div>
       </div>
-      <div className="flex items-center gap-2 flex-shrink-0">
+      <div className="flex items-center gap-1 flex-shrink-0">
         <span className={`font-mono text-sm md:text-base font-semibold whitespace-nowrap ${t.type === 'income' ? 'text-emerald-600' : 'text-stone-900'}`}>
           {t.type === 'income' ? '+' : '-'}{fmt(t.amount)}
         </span>
@@ -537,12 +717,22 @@ function TransactionRow({ t, onDelete }: { t: Transaction; onDelete: (id: string
             </button>
           </div>
         ) : (
-          <button
-            onClick={() => setConfirm(true)}
-            className="w-10 h-10 md:w-7 md:h-7 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-500 text-stone-300 transition-all active:scale-95 md:opacity-0"
-          >
-            <Trash2 size={18} className="md:w-3.5 md:h-3.5" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => onEdit(t)}
+              className="w-10 h-10 md:w-7 md:h-7 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-blue-50 hover:text-blue-500 text-stone-300 transition-all active:scale-95 md:opacity-0"
+              title="Edit"
+            >
+              <Edit2 size={18} className="md:w-3.5 md:h-3.5" />
+            </button>
+            <button
+              onClick={() => setConfirm(true)}
+              className="w-10 h-10 md:w-7 md:h-7 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-500 text-stone-300 transition-all active:scale-95 md:opacity-0"
+              title="Delete"
+            >
+              <Trash2 size={18} className="md:w-3.5 md:h-3.5" />
+            </button>
+          </div>
         )}
       </div>
     </div>
@@ -555,12 +745,14 @@ export default function App() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [budget, setBudget] = useState<Budget>({ limit: 0, month: currentMonth() })
   const [showModal, setShowModal] = useState(false)
+  const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null)
   const [search, setSearch] = useState('')
   const [filterType, setFilterType] = useState<'all' | TransactionType>('all')
   const [filterCategory, setFilterCategory] = useState<Category | 'all'>('all')
   const [user, setUser] = useState<User | null>(null)
   const [isGuest, setIsGuest] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
   // Load data and set up real-time listeners
   useEffect(() => {
@@ -735,9 +927,11 @@ export default function App() {
         createdAt: Date.now(),
       }
       setTransactions(prev => [t, ...prev])
+      setToast({ type: 'success', message: 'Transaction added successfully!' })
       console.log('✓ Transaction added:', t.id)
     } catch (error) {
       console.error('✗ Error adding transaction:', error)
+      setToast({ type: 'error', message: 'Failed to add transaction' })
     }
   }, [])
 
@@ -748,8 +942,23 @@ export default function App() {
         console.log('✓ Transaction deleted:', id)
         return newTransactions
       })
+      setToast({ type: 'success', message: 'Transaction deleted!' })
     } catch (error) {
       console.error('✗ Error deleting transaction:', error)
+      setToast({ type: 'error', message: 'Failed to delete transaction' })
+    }
+  }, [])
+
+  const editTransaction = useCallback((updatedTransaction: Transaction) => {
+    try {
+      setTransactions(prev =>
+        prev.map(t => t.id === updatedTransaction.id ? updatedTransaction : t)
+      )
+      setToast({ type: 'success', message: 'Transaction updated successfully!' })
+      console.log('✓ Transaction updated:', updatedTransaction.id)
+    } catch (error) {
+      console.error('✗ Error updating transaction:', error)
+      setToast({ type: 'error', message: 'Failed to update transaction' })
     }
   }, [])
 
@@ -943,7 +1152,7 @@ export default function App() {
                       </div>
                     ) : (
                       filtered.map(t => (
-                        <TransactionRow key={t.id} t={t} onDelete={deleteTransaction} />
+                        <TransactionRow key={t.id} t={t} onDelete={deleteTransaction} onEdit={(transaction) => setEditingTransaction(transaction)} />
                       ))
                     )}
                   </div>
@@ -964,6 +1173,22 @@ export default function App() {
 
           {showModal && (
             <AddTransactionModal onClose={() => setShowModal(false)} onAdd={addTransaction} />
+          )}
+
+          {editingTransaction && (
+            <EditTransactionModal
+              transaction={editingTransaction}
+              onClose={() => setEditingTransaction(null)}
+              onSave={editTransaction}
+            />
+          )}
+
+          {toast && (
+            <Toast
+              type={toast.type}
+              message={toast.message}
+              onClose={() => setToast(null)}
+            />
           )}
         </>
       )}

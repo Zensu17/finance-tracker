@@ -111,3 +111,10 @@ scripts/
 .gradle
 .idea
 local.properties
+
+# Development Documentation (Reference only, not for repo)
+MOBILE_OPTIMIZATIONS.md
+RESPONSIVE_EXAMPLES.md
+RESPONSIVE_SUMMARY.md
+TAILWIND_CLASSES_REFERENCE.md
+IMPLEMENTATION_SUMMARY.md
