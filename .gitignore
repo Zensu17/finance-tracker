@@ -1,21 +1,113 @@
+# Dependencies
 node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Build & Dist
 dist/
+build/
+.next/
+out/
+
+# Environment Variables
 .env
-.env.*
+.env.local
+.env.*.local
 !.env.example
 
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.sublime-project
+*.sublime-workspace
+.emacs.desktop
+.emacs.desktop.lock
+*.jedi
+
 # Logs
+logs/
+*.log
 npm-debug.log*
+npm-error.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+lerna-debug.log*
 
-# OS / editor files
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
-
-# Cache / build artifacts
+# Cache & Temporary
+.cache/
 .vite/
+.eslintcache
+.stylelintcache
+.prettier-cache
+
+# Testing
 coverage/
+.nyc_output/
+jest.config.js
+
+# Firebase
+.firebase/
+.firebaserc
+.runtimeconfig.json
+
+# OS Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Misc
+*.bak
+*.tmp
+*.swp
+.env.production.local
+.env.development.local
+.env.test.local
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Output of the go coverage tool
+*.out
+
+# Dependency directories
+jspm_packages/
+
+# Optional REPL history
+.node_repl_history
+
+# Optional npm start script for Windows Git Bash
+scripts/
+
+# dotenv environment variable files
+.env*.local
+
+# macOS
+.AppleDouble
+.LSOverride
+
+# Yarn
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+
+# IDEs
+*.iml
+.gradle
+.idea
+local.properties
