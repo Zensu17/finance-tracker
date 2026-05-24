@@ -104,5 +104,3 @@ npm run dev
 
 ---
 
-Jika Anda ingin, saya bisa memasukkan contoh aturan Firestore, contoh migrasi data dari guest ke user saat login, atau menambahkan diagram alur pada README. Beri tahu ingin saya simpan perubahan ini ke file README sekarang.
-
