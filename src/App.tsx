@@ -4,7 +4,8 @@ import {
   Plus, Trash2, Search, TrendingUp, TrendingDown, Wallet,
   ChevronDown, X, SlidersHorizontal, ShoppingCart, Car,
   Utensils, Home, Heart, Briefcase, Zap, Gift, MoreHorizontal,
-  DollarSign, PiggyBank, CheckCircle2, Edit2, ChevronLeft, ChevronRight, Calendar, Copy
+  DollarSign, PiggyBank, CheckCircle2, Edit2, ChevronLeft, ChevronRight, Calendar, Copy,
+  Download
 } from 'lucide-react'
 import { onAuthStateChanged, User } from 'firebase/auth'
 import { doc, setDoc, onSnapshot } from 'firebase/firestore'
@@ -971,6 +972,52 @@ export default function App() {
     console.log('✓ Transaction duplicated:', transaction.id)
   }, [addTransaction])
 
+  // Export transactions to CSV
+  const exportToCSV = useCallback(() => {
+    if (monthlyTransactions.length === 0) {
+      toast.error('No transactions to export')
+      return
+    }
+
+    // Create CSV header
+    const headers = ['Date', 'Description', 'Category', 'Amount', 'Type']
+    
+    // Create CSV rows
+    const rows = monthlyTransactions.map(t => [
+      t.date,
+      `"${t.description.replace(/"/g, '""')}"`, // Escape quotes
+      t.category,
+      t.amount.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 }),
+      t.type,
+    ])
+
+    // Combine header and rows
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.join(','))
+    ].join('\n')
+
+    // Create blob and trigger download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const link = document.createElement('a')
+    const url = URL.createObjectURL(blob)
+    
+    // Generate filename with month and year
+    const [year, month] = monthNav.selectedMonth.split('-')
+    const monthName = new Date(Number(year), Number(month) - 1).toLocaleString('id-ID', { month: 'long' })
+    const fileName = `finance-report-${monthName}-${year}.csv`
+    
+    link.setAttribute('href', url)
+    link.setAttribute('download', fileName)
+    link.style.visibility = 'hidden'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    
+    toast.success(`✓ Exported ${monthlyTransactions.length} transactions`)
+    console.log(`✓ CSV exported: ${fileName}`)
+  }, [monthlyTransactions, monthNav.selectedMonth])
+
   const handleSignOut = async () => {
     if (window.confirm('Apakah Anda yakin ingin keluar?')) {
       try {
@@ -1186,7 +1233,18 @@ export default function App() {
                 <div className="bg-white rounded-2xl border border-stone-100 w-full">
                   <div className="px-4 pt-4 pb-2 flex items-center justify-between">
                     <span className="text-sm font-medium text-stone-700">Transactions</span>
-                    <span className="text-xs text-stone-400">{filtered.length} entries</span>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-stone-400">{filtered.length} entries</span>
+                      <button
+                        onClick={exportToCSV}
+                        disabled={monthlyTransactions.length === 0}
+                        className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 disabled:bg-stone-100 disabled:text-stone-400 disabled:cursor-not-allowed transition-colors active:scale-95"
+                        title={`Export ${monthlyTransactions.length} transactions as CSV`}
+                      >
+                        <Download size={14} />
+                        Export CSV
+                      </button>
+                    </div>
                   </div>
                   <div className="divide-y divide-stone-50 px-2 pb-2 max-h-[520px] overflow-y-auto scrollbar-thin">
                     {filtered.length === 0 ? (
