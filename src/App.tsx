@@ -5,13 +5,14 @@ import {
   ChevronDown, X, SlidersHorizontal, ShoppingCart, Car,
   Utensils, Home, Heart, Briefcase, Zap, Gift, MoreHorizontal,
   DollarSign, PiggyBank, CheckCircle2, Edit2, ChevronLeft, ChevronRight, Calendar, Copy,
-  Download, RotateCcw
+  Download, RotateCcw, BarChart3, Layout
 } from 'lucide-react'
 import { onAuthStateChanged, User } from 'firebase/auth'
 import { doc, setDoc, onSnapshot } from 'firebase/firestore'
 import { auth, db, signOutUser } from './firebase'
 import LoginScreen from './components/LoginScreen'
 import { useMonthNavigation } from './hooks/useMonthNavigation'
+import { AnalyticsDashboard } from './components/AnalyticsDashboard'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -793,6 +794,7 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null)
   const [isGuest, setIsGuest] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [viewMode, setViewMode] = useState<'dashboard' | 'analytics'>('dashboard')
 
   // Month Navigation
   const monthNav = useMonthNavigation()
@@ -1248,7 +1250,36 @@ export default function App() {
               </div>
             </div>
 
-            {/* Summary Cards - Responsive grid */}
+            {/* View Toggle */}
+            <div className="flex gap-2 justify-start">
+             <button
+               onClick={() => setViewMode('dashboard')}
+               className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all active:scale-95 ${
+                 viewMode === 'dashboard'
+                   ? 'bg-stone-900 text-white'
+                   : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+               }`}
+             >
+               <Layout size={16} />
+               Dashboard
+             </button>
+             <button
+               onClick={() => setViewMode('analytics')}
+               className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all active:scale-95 ${
+                 viewMode === 'analytics'
+                   ? 'bg-stone-900 text-white'
+                   : 'bg-stone-100 text-stone-600 hover:bg-stone-200'
+               }`}
+             >
+               <BarChart3 size={16} />
+               Analytics
+             </button>
+            </div>
+
+            {/* Content based on view mode */}
+            {viewMode === 'dashboard' ? (
+            <>
+            {/* Dashboard View */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
               <SummaryCard label="Net Balance" amount={balance} icon={<Wallet size={16} />} variant="neutral" />
               <SummaryCard label="Total Income" amount={totalIncome} icon={<TrendingUp size={16} />} variant="income" />
@@ -1349,6 +1380,15 @@ export default function App() {
                 <CategoryBreakdown transactions={monthlyTransactions} />
               </div>
             </div>
+            </>) : (
+            <>
+            {/* Analytics View */}
+            <AnalyticsDashboard
+              transactions={monthlyTransactions}
+              selectedMonth={monthNav.selectedMonth}
+            />
+            </>
+            )}
           </main>
 
           {showModal && (
