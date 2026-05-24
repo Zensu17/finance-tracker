@@ -1,108 +1,113 @@
-# finance-tracker
+# 💰 Finance Tracker
 
-## Cara Kerja Aplikasi (Lengkap)
+Personal finance management application built with React, TypeScript, and Firebase.
 
-Finance Tracker adalah aplikasi pencatatan keuangan pribadi untuk mencatat pemasukan, pengeluaran, dan mengelola anggaran bulanan. Dokumen ini menjelaskan alur, struktur data, penanganan error, dan detail teknis lainnya.
+## Overview
 
-### Ringkasan Singkat
-- **Tujuan**: Mencatat pemasukan & pengeluaran, menampilkan ringkasan saldo, dan memonitor pemakaian budget bulanan.
-- **Entry point**: `src/main.tsx` → `src/App.tsx`.
-- **Mode penyimpanan**: Firestore (user-authenticated) atau `localStorage` (guest).
+Finance Tracker adalah aplikasi web untuk mencatat dan mengelola keuangan pribadi. Fitur utama meliputi:
 
-### Prinsip Desain
-- **Single source of truth**: Saat user login, Firestore adalah sumber data; saat guest, `localStorage` berguna sebagai penyimpanan lokal.
-- **Optimistic UI**: Perubahan langsung ditampilkan di UI dan kemudian disinkronkan ke penyimpanan.
-- **Segregasi data per pengguna**: Data di Firestore ditempatkan di jalur yang mengikat ke `uid` pengguna.
-- **Offline/guest support**: Mode tamu memungkinkan penggunaan tanpa akun; sinkronisasi ke cloud hanya pada mode login.
+- ✅ **Pencatatan Transaksi** - Catat pemasukan dan pengeluaran dengan kategori
+- ✅ **Ringkasan Keuangan** - Lihat saldo total, total pemasukan, dan pengeluaran
+- ✅ **Manajemen Budget** - Atur budget bulanan dan monitor penggunaan
+- ✅ **Breakdown Kategori** - Analisis pengeluaran berdasarkan kategori
+- ✅ **Navigasi Bulanan** - Lihat data historis bulan-bulan sebelumnya
+- ✅ **Pencarian & Filter** - Cari transaksi berdasarkan deskripsi, tipe, atau kategori
+- ✅ **Mode Guest** - Gunakan tanpa login (data tersimpan di browser)
+- ✅ **Cloud Sync** - Login dengan Google untuk sinkronisasi data ke cloud
 
-### Alur Aplikasi (Langkah-demi-langkah)
-1. Inisialisasi:
-	- Browser memuat `index.html` → `src/main.tsx` → render `App`.
-2. Cek autentikasi di `App`:
-	- Panggil Firebase Auth untuk mengetahui status sesi.
-	- Jika ada user terautentikasi: ambil `uid` dan lanjut ke load data Firestore.
-	- Jika tidak ada dan user memilih "Tamu": set mode guest dan baca `localStorage`.
-3. Load data awal:
-	- Mode Google: ambil data user dari Firestore (mis. `users/{uid}/transactions`, `users/{uid}/settings`).
-	- Mode Tamu: baca dan parse JSON dari `localStorage` (gunakan key yang konsisten, mis. `finance-tracker:guest:data`).
-4. Normalisasi & state lokal:
-	- Konversi data ke struktur state React (mis. `transactions[]`, `settings`, `summary`).
-	- Sediakan state via Context atau state management (useReducer / Zustand / Redux).
-5. Render UI:
-	- Tampilkan ringkasan (saldo, total income/expense), daftar transaksi, grafik kategori, kontrol tambah transaksi, dan pengaturan budget.
-6. Menambah transaksi:
-	- User isi form (tanggal, jumlah, tipe, kategori, note).
-	- Validasi input; lakukan optimistic update ke state.
-	- Mode Google: `addTransaction(uid, tx)` → tulis ke Firestore.
-	- Mode Tamu: update `localStorage`.
-	- Jika write Firestore gagal: rollback atau tampilkan error + opsi retry.
-7. Mengubah / menghapus transaksi:
-	- Update state lokal lalu kirim operasi update/delete ke penyimpanan yang sesuai.
-	- Minta konfirmasi sebelum delete.
-8. Filter & pencarian:
-	- Semua filter/pencarian dilakukan client-side pada state yang dimuat (tipe, kategori, tanggal, keyword).
-9. Pengelolaan budget:
-	- Simpan budget bulanan ke Firestore atau `localStorage`.
-	- Hitung progress: `progress = totalExpense / monthlyBudget` dan tampilkan progress bar + alert saat mendekati/melebihi.
-10. Sign-out & cleanup:
-	- Unsubscribe listener Firestore saat logout/komponen unmount.
-	- Hapus sesi lokal dan kembali ke layar login.
+## Tech Stack
 
-### Komponen & Tanggung Jawab
-- `src/App.tsx`: Koordinator utama; cek auth, inisialisasi data, sediakan context/state untuk anak komponen.
-- `src/components/LoginScreen.tsx`: UI login Google & opsi mode tamu.
-- `src/firebase.ts`: Inisialisasi Firebase dan helper CRUD:
-  - `signInWithGoogle()`
-  - `signOut()`
-  - `getUserData(uid)` / `listenUserData(uid, onChange)`
-  - `addTransaction(uid, tx)`, `updateTransaction(uid, id, tx)`, `deleteTransaction(uid, id)`
-- State management: React Context + `useReducer` atau eksternal (Zustand/Redux) untuk kemudahan update global dan rollback.
+- **Frontend**: React 18, TypeScript, Tailwind CSS
+- **Backend**: Firebase (Authentication, Firestore)
+- **UI Components**: Lucide React Icons, Sonner Toasts
+- **Build Tool**: Vite
 
-### Struktur Data & Contoh Dokumen (Firestore)
-- Collections path: `users/{uid}/transactions/{txId}`
-- Contoh dokumen transaksi:
-```json
-{
-  "amount": 150000,
-  "type": "expense",
-  "category": "Makanan",
-  "note": "Makan siang",
-  "date": "2026-05-20T12:00:00.000Z",
-  "createdAt": "<serverTimestamp>",
-  "updatedAt": "<serverTimestamp>"
-}
-```
-- Contoh dokumen settings (`users/{uid}/settings`):
-```json
-{
-  "monthlyBudget": 3000000,
-  "currency": "IDR",
-  "categories": ["Makanan","Transport","Hiburan"]
-}
-```
+## Getting Started
 
-### Penanganan Error & Edge Cases
-- **Koneksi terputus**: Berikan mode offline/guest; queue perubahan lokal dan retry saat online.
-- **Conflict multi-device**: Gunakan `updatedAt` timestamp; default: last-write-wins, atau tampilkan opsi merge manual untuk kasus kompleks.
-- **Validasi input**: Pastikan `amount > 0`, `type` valid, `date` parseable.
-- **Rollback pada kegagalan write**: Untuk optimistic updates, simpan snapshot sebelum update untuk rollback bila operasi server gagal.
-- **Quota & batching**: Hindari menulis terlalu sering ke Firestore; batasi operasi beruntun atau gunakan batch writes jika perlu.
-- **Keamanan**: Terapkan aturan Firestore yang membatasi akses hanya ke `users/{uid}` yang sesuai.
+### Prerequisites
+- Node.js 16+
+- Firebase project with Authentication and Firestore enabled
 
-### Testing & Debugging
-- Gunakan mock `localStorage` untuk pengujian mode guest.
-- Untuk pengembangan, gunakan Firebase Emulator Suite agar tidak menulis ke produksi.
-- Log error jaringan dan respon Firestore untuk diagnosa.
+### Installation
 
-### Run Lokal & Deploy
-- Install dependencies dan jalankan dev server:
 ```bash
+# Install dependencies
 npm install
+
+# Create .env file with your Firebase credentials
+cp .env.example .env
+
+# Start development server
 npm run dev
+
+# Build for production
+npm run build
 ```
-- Deploy: Proyek bisa dideploy ke Vercel atau host statis; set environment variables Firebase pada platform deploy.
 
----
+### Environment Variables
 
-Jika Anda ingin, saya bisa memasukkan contoh aturan Firestore, contoh migrasi data dari guest ke user saat login, atau menambahkan diagram alur pada README. Beri tahu ingin saya simpan perubahan ini ke file README sekarang.
+Create a `.env` file in the root directory:
+
+```
+VITE_FIREBASE_API_KEY=your_api_key
+VITE_FIREBASE_AUTH_DOMAIN=your_auth_domain
+VITE_FIREBASE_PROJECT_ID=your_project_id
+VITE_FIREBASE_STORAGE_BUCKET=your_storage_bucket
+VITE_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+VITE_FIREBASE_APP_ID=your_app_id
+```
+
+## Features
+
+### 📊 Dashboard
+- Real-time balance, income, and expense overview
+- Monthly stats and trends
+- Budget progress indicator
+
+### 💳 Transaction Management
+- Add, edit, delete transactions
+- Support for multiple categories
+- Income and expense tracking
+- Transaction search and filtering
+
+### 📅 Monthly Navigation
+- Navigate between months to view historical data
+- All stats automatically update for selected month
+- Category breakdown reflects selected month
+
+### 💰 Budget Management
+- Set monthly budget limit
+- Track spending against budget
+- Visual progress indicator
+- Warning when budget is exceeded
+
+### 🔐 Authentication
+- Google Sign-In integration
+- Guest mode with local storage
+- Secure cloud data sync with Firestore
+
+## Usage
+
+1. **Start the App**: Open the application and choose to login with Google or use as Guest
+2. **Add Transaction**: Click the "Add" button to record new transactions
+3. **View Dashboard**: See your balance, income, and expenses overview
+4. **Navigate Months**: Use the month navigation to view previous months
+5. **Set Budget**: Click "Edit" on the Monthly Budget card to set your monthly limit
+6. **Search & Filter**: Use the search bar and filters to find specific transactions
+
+## Project Structure
+
+```
+src/
+├── components/          # Reusable UI components
+├── hooks/              # Custom React hooks (useMonthNavigation)
+├── App.tsx             # Main application component
+├── firebase.ts         # Firebase configuration and helpers
+├── main.tsx            # Entry point
+└── index.css           # Global styles
+```
+
+## License
+
+This project is open source and available under the MIT License.
 

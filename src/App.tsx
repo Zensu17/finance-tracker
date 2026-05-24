@@ -4,12 +4,13 @@ import {
   Plus, Trash2, Search, TrendingUp, TrendingDown, Wallet,
   ChevronDown, X, SlidersHorizontal, ShoppingCart, Car,
   Utensils, Home, Heart, Briefcase, Zap, Gift, MoreHorizontal,
-  DollarSign, PiggyBank, CheckCircle2, Edit2
+  DollarSign, PiggyBank, CheckCircle2, Edit2, ChevronLeft, ChevronRight, Calendar
 } from 'lucide-react'
 import { onAuthStateChanged, User } from 'firebase/auth'
 import { doc, setDoc, onSnapshot } from 'firebase/firestore'
 import { auth, db, signOutUser } from './firebase'
 import LoginScreen from './components/LoginScreen'
+import { useMonthNavigation } from './hooks/useMonthNavigation'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -730,6 +731,10 @@ export default function App() {
   const [isGuest, setIsGuest] = useState(false)
   const [loading, setLoading] = useState(true)
 
+  // Month Navigation
+  const monthNav = useMonthNavigation()
+  const isCurrentMonth = monthNav.selectedMonth === new Date().toISOString().slice(0, 7)
+
   // Load data and set up real-time listeners
   useEffect(() => {
     if (!user || isGuest) {
@@ -856,23 +861,24 @@ export default function App() {
   }, [auth])
 
   // Derived stats
+  // Filter transactions to selected month ONLY
+  const monthlyTransactions = useMemo(
+    () => monthNav.filterBySelectedMonth(transactions),
+    [transactions, monthNav]
+  )
+
+  // Calculate stats based on SELECTED MONTH
   const totalIncome = useMemo(
-    () => transactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0),
-    [transactions]
+    () => monthlyTransactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0),
+    [monthlyTransactions]
   )
   const totalExpenses = useMemo(
-    () => transactions.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0),
-    [transactions]
+    () => monthlyTransactions.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0),
+    [monthlyTransactions]
   )
   const balance = totalIncome - totalExpenses
 
-  const thisMonth = currentMonth()
-  const monthlyExpenses = useMemo(
-    () => transactions
-      .filter(t => t.type === 'expense' && t.date.startsWith(thisMonth))
-      .reduce((s, t) => s + t.amount, 0),
-    [transactions]
-  )
+  const monthlyExpenses = totalExpenses
 
   // All unique categories in current transactions for filter
   const usedCategories = useMemo(() => {
@@ -880,9 +886,9 @@ export default function App() {
     return Array.from(cats) as Category[]
   }, [transactions])
 
-  // Filtered + searched transactions
+  // Filtered + searched transactions (use monthly transactions)
   const filtered = useMemo(() => {
-    return transactions
+    return monthlyTransactions
       .filter(t => {
         if (filterType !== 'all' && t.type !== filterType) return false
         if (filterCategory !== 'all' && t.category !== filterCategory) return false
@@ -893,7 +899,7 @@ export default function App() {
         return true
       })
       .sort((a, b) => b.createdAt - a.createdAt)
-  }, [transactions, filterType, filterCategory, search])
+  }, [monthlyTransactions, filterType, filterCategory, search])
 
   const addTransaction = useCallback((data: Omit<Transaction, 'id' | 'createdAt'>) => {
     try {
@@ -1061,6 +1067,44 @@ export default function App() {
           </header>
 
           <main className="w-full max-w-7xl mx-auto px-4 md:px-6 lg:px-8 py-6 md:py-8 space-y-6">
+            {/* Month Navigation Header */}
+            <div className="bg-white rounded-2xl border border-stone-100 p-4">
+              <div className="flex items-center justify-center gap-4">
+                <button
+                  onClick={monthNav.goToPreviousMonth}
+                  className="p-2 hover:bg-stone-100 rounded-lg transition-colors active:scale-95 text-stone-600 hover:text-stone-900"
+                  title="Previous month"
+                >
+                  <ChevronLeft size={20} />
+                </button>
+
+                <div className="flex items-center gap-2 flex-1 justify-center min-w-0">
+                  <Calendar size={16} className="text-stone-400 flex-shrink-0" />
+                  <div className="text-center flex-1">
+                    <div className="text-sm md:text-base font-semibold text-stone-900">
+                      {monthNav.getMonthDisplay(monthNav.selectedMonth)}
+                    </div>
+                    {!isCurrentMonth && (
+                      <button
+                        onClick={monthNav.goToCurrentMonth}
+                        className="text-xs text-stone-400 hover:text-stone-600 transition-colors underline"
+                      >
+                        View current month
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <button
+                  onClick={monthNav.goToNextMonth}
+                  className="p-2 hover:bg-stone-100 rounded-lg transition-colors active:scale-95 text-stone-600 hover:text-stone-900"
+                  title="Next month"
+                >
+                  <ChevronRight size={20} />
+                </button>
+              </div>
+            </div>
+
             {/* Summary Cards - Responsive grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
               <SummaryCard label="Net Balance" amount={balance} icon={<Wallet size={16} />} variant="neutral" />
@@ -1148,7 +1192,7 @@ export default function App() {
                   monthlyExpenses={monthlyExpenses}
                   onUpdate={updateBudget}
                 />
-                <CategoryBreakdown transactions={transactions} />
+                <CategoryBreakdown transactions={monthlyTransactions} />
               </div>
             </div>
           </main>
