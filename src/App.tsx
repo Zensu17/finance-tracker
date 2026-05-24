@@ -4,7 +4,7 @@ import {
   Plus, Trash2, Search, TrendingUp, TrendingDown, Wallet,
   ChevronDown, X, SlidersHorizontal, ShoppingCart, Car,
   Utensils, Home, Heart, Briefcase, Zap, Gift, MoreHorizontal,
-  DollarSign, PiggyBank, CheckCircle2, Edit2, ChevronLeft, ChevronRight, Calendar
+  DollarSign, PiggyBank, CheckCircle2, Edit2, ChevronLeft, ChevronRight, Calendar, Copy
 } from 'lucide-react'
 import { onAuthStateChanged, User } from 'firebase/auth'
 import { doc, setDoc, onSnapshot } from 'firebase/firestore'
@@ -658,7 +658,7 @@ function CategoryBreakdown({ transactions }: { transactions: Transaction[] }) {
 
 // ─── Transaction Row ──────────────────────────────────────────────────────────
 
-function TransactionRow({ t, onDelete, onEdit }: { t: Transaction; onDelete: (id: string) => void; onEdit: (transaction: Transaction) => void }) {
+function TransactionRow({ t, onDelete, onEdit, onDuplicate }: { t: Transaction; onDelete: (id: string) => void; onEdit: (transaction: Transaction) => void; onDuplicate: (transaction: Transaction) => void }) {
   const [confirm, setConfirm] = useState(false)
 
   return (
@@ -697,15 +697,22 @@ function TransactionRow({ t, onDelete, onEdit }: { t: Transaction; onDelete: (id
         ) : (
           <div className="flex items-center gap-1">
             <button
+              onClick={() => onDuplicate(t)}
+              className="w-10 h-10 md:w-7 md:h-7 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-emerald-50 hover:text-emerald-600 text-stone-300 transition-all active:scale-95"
+              title="Duplicate"
+            >
+              <Copy size={18} className="md:w-3.5 md:h-3.5" />
+            </button>
+            <button
               onClick={() => onEdit(t)}
-              className="w-10 h-10 md:w-7 md:h-7 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-blue-50 hover:text-blue-500 text-stone-300 transition-all active:scale-95 md:opacity-0"
+              className="w-10 h-10 md:w-7 md:h-7 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-blue-50 hover:text-blue-500 text-stone-300 transition-all active:scale-95"
               title="Edit"
             >
               <Edit2 size={18} className="md:w-3.5 md:h-3.5" />
             </button>
             <button
               onClick={() => setConfirm(true)}
-              className="w-10 h-10 md:w-7 md:h-7 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-500 text-stone-300 transition-all active:scale-95 md:opacity-0"
+              className="w-10 h-10 md:w-7 md:h-7 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-500 text-stone-300 transition-all active:scale-95"
               title="Delete"
             >
               <Trash2 size={18} className="md:w-3.5 md:h-3.5" />
@@ -948,6 +955,22 @@ export default function App() {
     setBudget({ limit, month: currentMonth() })
   }, [])
 
+  const handleDuplicate = useCallback((transaction: Transaction) => {
+    // Create duplicate data with today's date
+    const duplicatedData = {
+      type: transaction.type,
+      amount: transaction.amount,
+      category: transaction.category,
+      date: new Date().toISOString().slice(0, 10), // Today's date
+      description: transaction.description,
+    }
+    
+    // Add the duplicated transaction
+    addTransaction(duplicatedData)
+    toast.success(`✓ Transaction duplicated! Adjust if needed.`)
+    console.log('✓ Transaction duplicated:', transaction.id)
+  }, [addTransaction])
+
   const handleSignOut = async () => {
     if (window.confirm('Apakah Anda yakin ingin keluar?')) {
       try {
@@ -1178,7 +1201,7 @@ export default function App() {
                       </div>
                     ) : (
                       filtered.map(t => (
-                        <TransactionRow key={t.id} t={t} onDelete={deleteTransaction} onEdit={(transaction) => setEditingTransaction(transaction)} />
+                       <TransactionRow key={t.id} t={t} onDelete={deleteTransaction} onEdit={(transaction) => setEditingTransaction(transaction)} onDuplicate={handleDuplicate} />
                       ))
                     )}
                   </div>
