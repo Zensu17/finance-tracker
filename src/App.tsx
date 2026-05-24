@@ -5,7 +5,7 @@ import {
   ChevronDown, X, SlidersHorizontal, ShoppingCart, Car,
   Utensils, Home, Heart, Briefcase, Zap, Gift, MoreHorizontal,
   DollarSign, PiggyBank, CheckCircle2, Edit2, ChevronLeft, ChevronRight, Calendar, Copy,
-  Download
+  Download, RotateCcw
 } from 'lucide-react'
 import { onAuthStateChanged, User } from 'firebase/auth'
 import { doc, setDoc, onSnapshot } from 'firebase/firestore'
@@ -30,6 +30,7 @@ export interface Transaction {
   date: string
   description: string
   createdAt: number
+  isRecurring?: boolean
 }
 
 export interface Budget {
@@ -190,6 +191,7 @@ const EMPTY_FORM = {
   category: 'Food & Dining' as Category,
   date: new Date().toISOString().slice(0, 10),
   description: '',
+  isRecurring: false,
 }
 
 function AddTransactionModal({
@@ -224,6 +226,7 @@ function AddTransactionModal({
       category: form.category,
       date: form.date,
       description: form.description.trim(),
+      isRecurring: form.isRecurring || false,
     })
     onClose()
   }
@@ -314,6 +317,21 @@ function AddTransactionModal({
             />
           </div>
 
+          {/* Recurring Checkbox */}
+          <div className="flex items-center gap-3 px-3 py-3 bg-blue-50 rounded-xl border border-blue-100">
+            <input
+              type="checkbox"
+              id="recurring"
+              checked={form.isRecurring || false}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, isRecurring: e.target.checked }))}
+              className="w-4 h-4 rounded cursor-pointer accent-blue-600"
+            />
+            <label htmlFor="recurring" className="flex-1 text-sm font-medium text-stone-700 cursor-pointer">
+              Mark as Recurring
+            </label>
+            <span className="text-xs text-stone-500">Repeat monthly</span>
+          </div>
+
           {error && (
             <p className="text-xs text-rose-500 bg-rose-50 px-3 py-2 rounded-lg">{error}</p>
           )}
@@ -353,6 +371,7 @@ function EditTransactionModal({
     category: transaction.category,
     date: transaction.date,
     description: transaction.description,
+    isRecurring: transaction.isRecurring || false,
   })
   const [error, setError] = useState('')
 
@@ -380,6 +399,7 @@ function EditTransactionModal({
       category: form.category,
       date: form.date,
       description: form.description.trim(),
+      isRecurring: form.isRecurring || false,
     })
     onClose()
   }
@@ -468,6 +488,21 @@ function EditTransactionModal({
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, description: e.target.value }))}
               className="w-full px-3 py-3 md:py-2.5 text-base md:text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50"
             />
+          </div>
+
+          {/* Recurring Checkbox */}
+          <div className="flex items-center gap-3 px-3 py-3 bg-blue-50 rounded-xl border border-blue-100">
+            <input
+              type="checkbox"
+              id="recurring-edit"
+              checked={form.isRecurring || false}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, isRecurring: e.target.checked }))}
+              className="w-4 h-4 rounded cursor-pointer accent-blue-600"
+            />
+            <label htmlFor="recurring-edit" className="flex-1 text-sm font-medium text-stone-700 cursor-pointer">
+              Mark as Recurring
+            </label>
+            <span className="text-xs text-stone-500">Repeat monthly</span>
           </div>
 
           {error && (
@@ -659,8 +694,14 @@ function CategoryBreakdown({ transactions }: { transactions: Transaction[] }) {
 
 // ─── Transaction Row ──────────────────────────────────────────────────────────
 
-function TransactionRow({ t, onDelete, onEdit, onDuplicate }: { t: Transaction; onDelete: (id: string) => void; onEdit: (transaction: Transaction) => void; onDuplicate: (transaction: Transaction) => void }) {
+function TransactionRow({ t, onDelete, onEdit, onDuplicate, onRepeat }: { t: Transaction; onDelete: (id: string) => void; onEdit: (transaction: Transaction) => void; onDuplicate: (transaction: Transaction) => void; onRepeat?: (transaction: Transaction) => void }) {
   const [confirm, setConfirm] = useState(false)
+  
+  // Check if transaction is from a previous month (for Repeat button)
+  const currentDate = new Date()
+  const transactionDate = new Date(t.date)
+  const isFromPreviousMonth = transactionDate.getFullYear() < currentDate.getFullYear() ||
+    (transactionDate.getFullYear() === currentDate.getFullYear() && transactionDate.getMonth() < currentDate.getMonth())
 
   return (
     <div className="flex items-center gap-3 py-4 md:py-3 px-4 hover:bg-stone-50 rounded-xl transition-colors group active:bg-stone-50">
@@ -673,6 +714,11 @@ function TransactionRow({ t, onDelete, onEdit, onDuplicate }: { t: Transaction; 
         <p className="text-sm md:text-base font-medium text-stone-900 truncate">{t.description}</p>
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
           <CategoryBadge category={t.category} />
+          {t.isRecurring && (
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700 border border-blue-200">
+              Recurring
+            </span>
+          )}
           <span className="text-xs text-stone-400">{fmtDate(t.date)}</span>
         </div>
       </div>
@@ -697,6 +743,15 @@ function TransactionRow({ t, onDelete, onEdit, onDuplicate }: { t: Transaction; 
           </div>
         ) : (
           <div className="flex items-center gap-1">
+            {isFromPreviousMonth && onRepeat && (
+              <button
+                onClick={() => onRepeat(t)}
+                className="w-10 h-10 md:w-7 md:h-7 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-violet-50 hover:text-violet-600 text-stone-300 transition-all active:scale-95"
+                title="Repeat this month"
+              >
+                <RotateCcw size={18} className="md:w-3.5 md:h-3.5" />
+              </button>
+            )}
             <button
               onClick={() => onDuplicate(t)}
               className="w-10 h-10 md:w-7 md:h-7 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-emerald-50 hover:text-emerald-600 text-stone-300 transition-all active:scale-95"
@@ -964,12 +1019,30 @@ export default function App() {
       category: transaction.category,
       date: new Date().toISOString().slice(0, 10), // Today's date
       description: transaction.description,
+      isRecurring: transaction.isRecurring || false,
     }
     
     // Add the duplicated transaction
     addTransaction(duplicatedData)
     toast.success(`✓ Transaction duplicated! Adjust if needed.`)
     console.log('✓ Transaction duplicated:', transaction.id)
+  }, [addTransaction])
+
+  const handleRepeat = useCallback((transaction: Transaction) => {
+    // Create repeat data with today's date (for current month)
+    const repeatedData = {
+      type: transaction.type,
+      amount: transaction.amount,
+      category: transaction.category,
+      date: new Date().toISOString().slice(0, 10), // Today's date (current month)
+      description: transaction.description,
+      isRecurring: true, // Mark as recurring when repeating
+    }
+    
+    // Add the repeated transaction
+    addTransaction(repeatedData)
+    toast.success(`✓ Recurring transaction added for this month!`)
+    console.log('✓ Transaction repeated:', transaction.id)
   }, [addTransaction])
 
   // Export transactions to CSV
@@ -1259,7 +1332,7 @@ export default function App() {
                       </div>
                     ) : (
                       filtered.map(t => (
-                       <TransactionRow key={t.id} t={t} onDelete={deleteTransaction} onEdit={(transaction) => setEditingTransaction(transaction)} onDuplicate={handleDuplicate} />
+                       <TransactionRow key={t.id} t={t} onDelete={deleteTransaction} onEdit={(transaction) => setEditingTransaction(transaction)} onDuplicate={handleDuplicate} onRepeat={handleRepeat} />
                       ))
                     )}
                   </div>
