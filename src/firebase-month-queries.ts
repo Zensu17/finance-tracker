@@ -1,13 +1,3 @@
-/**
- * ============================================================================
- * FIRESTORE UTILITIES FOR MONTH-BASED QUERIES
- * ============================================================================
- * 
- * Optional: Add these functions to your firebase.ts for server-side filtering
- * Use these when you have 10,000+ transactions
- * 
- */
-
 import { 
   collection, 
   query, 
@@ -237,11 +227,11 @@ export async function getMonthStats(
   
   const totalIncome = transactions
     .filter(t => t.type === 'income')
-    .reduce((sum, t) => sum + t.amount, 0)
+    .reduce((sum, t) => sum + t.amountIDR, 0)
   
   const totalExpense = transactions
     .filter(t => t.type === 'expense')
-    .reduce((sum, t) => sum + t.amount, 0)
+    .reduce((sum, t) => sum + t.amountIDR, 0)
   
   return {
     totalIncome,
@@ -264,10 +254,47 @@ export async function getMonthCategoryBreakdown(
   const breakdown: Record<string, number> = {}
   
   for (const transaction of filtered) {
-    breakdown[transaction.category] = (breakdown[transaction.category] ?? 0) + transaction.amount
+    breakdown[transaction.category] = (breakdown[transaction.category] ?? 0) + transaction.amountIDR
   }
   
   return breakdown
+}
+
+/**
+ * Fetch transactions by tag using array-contains
+ *
+ * USAGE:
+ * const tagged = await getMonthTransactionsByTag(userId, '2024-05', '#urgent')
+ */
+export async function getMonthTransactionsByTag(
+  userId: string,
+  month: string,
+  tag: string
+): Promise<Transaction[]> {
+  try {
+    const startDate = getMonthStartDate(month)
+    const endDate = getMonthEndDate(month)
+
+    const normalizedTag = tag.startsWith('#') ? tag.toLowerCase() : `#${tag.toLowerCase()}`
+
+    const q = query(
+      collection(db, 'users', userId, 'transactions'),
+      where('date', '>=', startDate),
+      where('date', '<=', endDate),
+      where('tags', 'array-contains', normalizedTag),
+      orderBy('date', 'desc')
+    )
+
+    const snapshot = await getDocs(q)
+
+    return snapshot.docs.map(doc => ({
+      ...doc.data(),
+      id: doc.id,
+    } as Transaction))
+  } catch (error) {
+    console.error(`Error fetching tagged transactions (${tag}) for ${month}:`, error)
+    return []
+  }
 }
 
 /**

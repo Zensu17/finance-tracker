@@ -34,41 +34,6 @@ Finance Tracker adalah aplikasi web modern yang dirancang untuk membantu Anda **
 - **UI Components**: Lucide React Icons, Sonner Toasts
 - **Build Tool**: Vite
 
-## 🚀 Cara Memulai
-
-### Persyaratan
-- Node.js 16+
-- Akun Firebase dengan Authentication dan Firestore diaktifkan
-
-### Instalasi
-
-```bash
-# Install dependencies
-npm install
-
-# Buat file .env dengan Firebase credentials Anda
-cp .env.example .env
-
-# Jalankan development server
-npm run dev
-
-# Build untuk production
-npm run build
-```
-
-### Konfigurasi Environment Variables
-
-Buat file `.env` di root directory:
-
-```
-VITE_FIREBASE_API_KEY=your_api_key
-VITE_FIREBASE_AUTH_DOMAIN=your_auth_domain
-VITE_FIREBASE_PROJECT_ID=your_project_id
-VITE_FIREBASE_STORAGE_BUCKET=your_storage_bucket
-VITE_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
-VITE_FIREBASE_APP_ID=your_app_id
-```
-
 ## 📋 Fitur Lengkap
 
 ### 📊 Dashboard
@@ -113,18 +78,6 @@ VITE_FIREBASE_APP_ID=your_app_id
 5. **Atur Budget**: Klik "Edit" pada kartu Monthly Budget untuk menetapkan limit bulanan
 6. **Cari & Filter**: Gunakan search bar untuk menemukan transaksi spesifik
 7. **Duplikasi Transaksi**: Hover ke transaksi, klik tombol Duplikasi (ikon hijau) untuk membuat transaksi serupa
-
-## 📂 Struktur Proyek
-
-```
-src/
-├── components/          # Komponen UI yang dapat digunakan kembali
-├── hooks/              # Custom React hooks (useMonthNavigation)
-├── App.tsx             # Komponen aplikasi utama
-├── firebase.ts         # Konfigurasi Firebase dan helper functions
-├── main.tsx            # Entry point aplikasi
-└── index.css           # Gaya global
-```
 
 ## 📄 Lisensi
 
