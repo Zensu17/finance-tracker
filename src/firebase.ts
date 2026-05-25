@@ -118,3 +118,37 @@ export const updateBudget = async (userId: string, budgetId: string, limit: numb
   const docRef = doc(db, 'users', userId, 'budget', budgetId);
   await updateDoc(docRef, { limit });
 };
+
+// Notification services
+export const getNotificationSettings = async (userId: string) => {
+  try {
+    const docRef = doc(db, `users/${userId}/settings`, 'notifications');
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      return docSnap.data();
+    }
+    return null;
+  } catch (error) {
+    console.error('Error loading notification settings:', error);
+    return null;
+  }
+};
+
+export const saveNotificationToken = async (userId: string, fcmToken: string) => {
+  try {
+    const docRef = doc(db, `users/${userId}/settings`, 'notifications');
+    await setDoc(
+      docRef,
+      {
+        fcmToken,
+        lastUpdated: new Date().toISOString(),
+        enabled: true,
+      },
+      { merge: true }
+    );
+    return true;
+  } catch (error) {
+    console.error('Error saving notification token:', error);
+    return false;
+  }
+};

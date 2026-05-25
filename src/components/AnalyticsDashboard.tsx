@@ -72,7 +72,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
       
       // Optimized: single pass with reduce
       const totalExpenses = transactions.reduce((sum, t) => {
-        return t.date.startsWith(monthStr) && t.type === 'expense' ? sum + t.amountIDR : sum
+        return t.date.startsWith(monthStr) && t.type === 'expense' ? sum + t.amount : sum
       }, 0)
       
       data.push({
@@ -92,7 +92,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
     // Single pass through transactions
     for (const t of transactions) {
       if (t.date.startsWith(selectedMonth) && t.type === 'expense') {
-        categoryMap[t.category] = (categoryMap[t.category] || 0) + t.amountIDR
+        categoryMap[t.category] = (categoryMap[t.category] || 0) + t.amount
       }
     }
     
@@ -109,7 +109,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
     for (const t of transactions) {
       if (t.date.startsWith(selectedMonth) && t.type === 'expense') {
         const day = t.date.split('-')[2]
-        dayMap[day] = (dayMap[day] || 0) + t.amountIDR
+        dayMap[day] = (dayMap[day] || 0) + t.amount
       }
     }
     
@@ -139,7 +139,7 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({
     const monthExpenses = transactions.filter(t =>
       t.date.startsWith(selectedMonth) && t.type === 'expense'
     )
-    const totalExpenses = monthExpenses.reduce((sum, t) => sum + t.amountIDR, 0)
+    const totalExpenses = monthExpenses.reduce((sum, t) => sum + t.amount, 0)
     const avgTransaction = monthExpenses.length > 0 ? totalExpenses / monthExpenses.length : 0
 
     // Highest spending day (from daily breakdown)
@@ -432,13 +432,13 @@ const SummaryStatCard = React.memo<{
   borderColor: string
   textColor: string
 }>(({ label, value, subtitle, icon, bgColor, borderColor, textColor }) => (
-  <div className={`${bgColor} border ${borderColor} rounded-xl p-4`}>
+  <div className={`${bgColor} border ${borderColor} rounded-xl p-4 shadow-sm`}>
     <div className="flex items-start gap-3">
       <span className="text-2xl flex-shrink-0">{icon}</span>
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-medium text-stone-600 mb-1">{label}</p>
-        <p className={`text-lg md:text-xl font-semibold ${textColor} truncate`}>{value}</p>
-        <p className="text-xs text-stone-500 mt-1">{subtitle}</p>
+      <p className="text-sm font-medium text-slate-500 mb-1">{label}</p>
+      <p className={`text-2xl font-semibold ${textColor} truncate`}>{value}</p>
+      <p className="text-xs text-slate-500 mt-1">{subtitle}</p>
       </div>
     </div>
   </div>
@@ -450,8 +450,8 @@ const ChartCard = React.memo<{
   title: string
   children: React.ReactNode
 }>(({ title, children }) => (
-  <div className="bg-white border border-stone-100 rounded-2xl p-4 md:p-6">
-    <h3 className="text-sm md:text-base font-semibold text-stone-900 mb-4">{title}</h3>
+  <div className="bg-white border border-slate-200 rounded-xl p-4 md:p-6 shadow-sm">
+    <h3 className="text-sm md:text-base font-semibold text-slate-900 mb-4">{title}</h3>
     {children}
   </div>
 ))

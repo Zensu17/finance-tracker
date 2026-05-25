@@ -227,11 +227,11 @@ export async function getMonthStats(
   
   const totalIncome = transactions
     .filter(t => t.type === 'income')
-    .reduce((sum, t) => sum + t.amountIDR, 0)
+    .reduce((sum, t) => sum + t.amount, 0)
   
   const totalExpense = transactions
     .filter(t => t.type === 'expense')
-    .reduce((sum, t) => sum + t.amountIDR, 0)
+    .reduce((sum, t) => sum + t.amount, 0)
   
   return {
     totalIncome,
@@ -254,7 +254,7 @@ export async function getMonthCategoryBreakdown(
   const breakdown: Record<string, number> = {}
   
   for (const transaction of filtered) {
-    breakdown[transaction.category] = (breakdown[transaction.category] ?? 0) + transaction.amountIDR
+    breakdown[transaction.category] = (breakdown[transaction.category] ?? 0) + transaction.amount
   }
   
   return breakdown

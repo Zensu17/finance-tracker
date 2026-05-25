@@ -1,11 +1,11 @@
-import { useState, useEffect, useMemo, useCallback, createContext, useContext } from 'react'
+import { useState, useEffect, useMemo, useCallback, createContext, useContext, useRef } from 'react'
 import { toast, Toaster } from 'sonner'
 import {
   Plus, Trash2, Search, TrendingUp, TrendingDown, Wallet,
   ChevronDown, X, SlidersHorizontal, ShoppingCart, Car,
   Utensils, Home, Heart, Briefcase, Zap, Gift, MoreHorizontal,
   DollarSign, PiggyBank, CheckCircle2, Edit2, ChevronLeft, ChevronRight, Calendar, Copy,
-  Download, RotateCcw, BarChart3, Layout, Loader
+  Download, RotateCcw, BarChart3, Layout, Loader, AlertCircle, Bell
 } from 'lucide-react'
 import { onAuthStateChanged, User } from 'firebase/auth'
 import { doc, setDoc, onSnapshot, writeBatch } from 'firebase/firestore'
@@ -13,24 +13,19 @@ import { auth, db, signOutUser } from './firebase'
 import LoginScreen from './components/LoginScreen'
 import { useMonthNavigation } from './hooks/useMonthNavigation'
 import { AnalyticsDashboard } from './components/AnalyticsDashboard'
-import { convertToIDR, batchFetchRates } from './utils/currency'
+import { NotificationSettings } from './components/NotificationSettings'
+import { initializeMessaging } from './utils/notifications'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 type TransactionType = 'income' | 'expense'
-type CurrencyCode = 'IDR' | 'USD' | 'EUR' | 'SGD'
 
 type Category = string
 
 export interface Transaction {
   id: string
   type: TransactionType
-  // ─── Amount Fields (Multi-Currency) ───
-  amountIDR: number               // Converted amount in IDR (for dashboard calculations)
-  originalAmount: number          // User input in original currency
-  currency: CurrencyCode          // Currency code (IDR, USD, EUR, SGD)
-  exchangeRateUsed: number        // Rate used at time of transaction (historical accuracy)
-  // ────────────────────────────
+  amount: number
   category: Category
   date: string
   description: string
@@ -52,7 +47,6 @@ const DEFAULT_EXPENSE_CATEGORIES: Category[] = [
 ]
 const DEFAULT_INCOME_CATEGORIES: Category[] = ['Salary', 'Freelance', 'Investment', 'Gift', 'Other']
 const DEFAULT_CATEGORIES: Category[] = Array.from(new Set([...DEFAULT_EXPENSE_CATEGORIES, ...DEFAULT_INCOME_CATEGORIES])) as Category[]
-const SUPPORTED_CURRENCIES: CurrencyCode[] = ['IDR', 'USD', 'EUR', 'SGD']
 
 const CATEGORY_ICONS: Record<string, React.ReactNode> = {
   'Food & Dining': <Utensils size={14} />,
@@ -105,7 +99,6 @@ const STORAGE_KEYS = {
   transactions: 'ft_transactions',
   budget: 'ft_budget',
   categories: 'ft_categories',
-  // exchangeRates: EXCHANGE_CACHE_KEY, // Handled by src/utils/currency.ts
 }
 
 function loadFromStorage<T>(key: string, fallback: T): T {
@@ -138,26 +131,6 @@ function fmt(amount: number | undefined | null): string {
   }
 }
 
-function fmtOriginal(amount: number | undefined | null, currency: CurrencyCode): string {
-  // Validate amount
-  if (typeof amount !== 'number' || isNaN(amount)) {
-    return '0'
-  }
-  try {
-    const locale = currency === 'IDR' ? 'id-ID' : 'en-US'
-    const decimals = currency === 'IDR' ? 0 : 2
-    return new Intl.NumberFormat(locale, {
-      style: 'currency',
-      currency,
-      minimumFractionDigits: decimals,
-      maximumFractionDigits: decimals,
-    }).format(amount)
-  } catch (error) {
-    console.error('Error formatting original amount:', error)
-    return '0'
-  }
-}
-
 function currentMonth(): string {
   return new Date().toISOString().slice(0, 7)
 }
@@ -185,6 +158,53 @@ function parseTagsInput(input: string): string[] {
   )
 }
 
+// ─── Budget Alert System ───────────────────────────────────────────────────
+
+interface BudgetStatus {
+  percentage: number
+  status: 'safe' | 'warning' | 'critical'
+  message: string
+  icon: 'check' | 'alert' | 'error'
+}
+
+function calculateBudgetStatus(totalSpent: number, monthlyBudget: number | null | undefined): BudgetStatus {
+  if (!monthlyBudget || monthlyBudget <= 0) {
+    return {
+      percentage: 0,
+      status: 'safe',
+      message: 'No budget set',
+      icon: 'check'
+    }
+  }
+
+  const percentage = Math.min((totalSpent / monthlyBudget) * 100, 100)
+
+  if (percentage >= 100) {
+    return {
+      percentage,
+      status: 'critical',
+      message: `Critical: You've exceeded your budget by ${fmt(totalSpent - monthlyBudget)}`,
+      icon: 'error'
+    }
+  }
+
+  if (percentage >= 75) {
+    return {
+      percentage,
+      status: 'warning',
+      message: `Warning: You've used ${percentage.toFixed(1)}% of your budget`,
+      icon: 'alert'
+    }
+  }
+
+  return {
+    percentage,
+    status: 'safe',
+    message: `Safe: ${fmt(monthlyBudget - totalSpent)} remaining`,
+    icon: 'check'
+  }
+}
+
 // ─── Data Normalization (Migration for old data format) ─────────────────────
 
 /**
@@ -195,38 +215,50 @@ function normalizeTransaction(t: any): Transaction {
   // Validate basic structure
   if (!t || typeof t !== 'object') return null as any
 
-  // If already normalized (has valid amountIDR), return as-is
-  if (typeof t.amountIDR === 'number' && !isNaN(t.amountIDR) && t.amountIDR >= 0) {
-    return t as Transaction
-  }
-
-  // Migrate old transaction format
-  const originalAmount = t.originalAmount ?? t.amount ?? 0
-  const amountIDR = t.amountIDR ?? t.amount ?? 0
-  const currency = (t.currency ?? 'IDR') as CurrencyCode
-
-  if (t.amount !== undefined && t.amountIDR === undefined) {
-    console.warn('⚠️ Normalizing old transaction format:', {
+  // If already normalized, return as-is
+  if (typeof t.amount === 'number' && !isNaN(t.amount) && t.amount >= 0) {
+    return {
       id: t.id,
-      from: { amount: t.amount },
-      to: { amountIDR, originalAmount, currency }
-    })
+      type: t.type,
+      amount: t.amount,
+      category: t.category,
+      date: t.date,
+      description: t.description,
+      tags: t.tags ?? [],
+      createdAt: t.createdAt,
+      isRecurring: t.isRecurring ?? false,
+    } as Transaction
   }
 
-  return {
-    id: t.id,
-    type: t.type,
-    originalAmount,
-    amountIDR,
-    exchangeRateUsed: t.exchangeRateUsed ?? 1,
-    currency,
-    category: t.category,
-    date: t.date,
-    description: t.description,
-    tags: t.tags ?? [],
-    isRecurring: t.isRecurring ?? false,
-    createdAt: t.createdAt,
+  // Migrate old transaction format (no-op since we're already normalized)
+  const amount = t.amount ?? 0
+
+  if (!isNaN(amount) && amount >= 0) {
+    return {
+      id: t.id,
+      type: t.type,
+      amount,
+      category: t.category,
+      date: t.date,
+      description: t.description,
+      tags: t.tags ?? [],
+      createdAt: t.createdAt,
+      isRecurring: t.isRecurring ?? false,
+    } as Transaction
   }
+
+  // Fallback: return empty transaction with defaults
+  return {
+    id: t.id ?? '',
+    type: 'expense',
+    amount: 0,
+    category: t.category ?? 'Other',
+    date: t.date ?? new Date().toISOString().split('T')[0],
+    description: t.description ?? '',
+    tags: t.tags ?? [],
+    createdAt: t.createdAt ?? new Date().toISOString(),
+    isRecurring: false,
+  } as Transaction
 }
 
 /**
@@ -267,28 +299,12 @@ function normalizeBudget(budget: any): Budget {
   return { limit, month }
 }
 
-function formatLastUpdate(timestamp: number | null): string {
-  if (!timestamp) return 'Never'
-  const now = Date.now()
-  const diff = now - timestamp
-  const minutes = Math.floor(diff / 60000)
-  const hours = Math.floor(diff / 3600000)
-  const days = Math.floor(diff / 86400000)
-
-  if (minutes < 1) return 'Just now'
-  if (minutes < 60) return `${minutes}m ago`
-  if (hours < 24) return `${hours}h ago`
-  if (days < 7) return `${days}d ago`
-
-  return new Date(timestamp).toLocaleDateString('id-ID')
-}
-
 function getCategoryIcon(category: string): React.ReactNode {
   return CATEGORY_ICONS[category] ?? <MoreHorizontal size={14} />
 }
 
 function getCategoryColor(category: string): string {
-  return CATEGORY_COLORS[category] ?? 'bg-stone-100 text-stone-600'
+  return CATEGORY_COLORS[category] ?? 'bg-slate-100 text-slate-600'
 }
 
 function getCategoryBarColor(category: string): string {
@@ -316,9 +332,9 @@ function SummaryCard({
   variant: 'neutral' | 'income' | 'expense'
 }) {
   const colors = {
-    neutral: 'bg-stone-900 text-white',
-    income: 'bg-white border border-stone-100 text-stone-900',
-    expense: 'bg-white border border-stone-100 text-stone-900',
+    neutral: 'bg-slate-900 text-white shadow-sm',
+    income: 'bg-white border border-slate-200 text-slate-900 shadow-sm',
+    expense: 'bg-white border border-slate-200 text-slate-900 shadow-sm',
   }
   const amountColor = {
     neutral: 'text-white',
@@ -337,9 +353,9 @@ function SummaryCard({
   }
 
   return (
-    <div className={`rounded-2xl p-5 ${colors[variant]}`}>
+    <div className={`rounded-xl p-5 ${colors[variant]}`}>
       <div className="flex items-start justify-between mb-4">
-        <span className={`text-sm font-medium ${variant === 'neutral' ? 'text-stone-300' : 'text-stone-500'}`}>
+        <span className={`text-sm font-medium ${variant === 'neutral' ? 'text-slate-300' : 'text-slate-500'}`}>
           {label}
         </span>
         <div className={`w-8 h-8 rounded-xl flex items-center justify-center ${iconBg[variant]} ${iconColor[variant]}`}>
@@ -375,7 +391,6 @@ function TagChip({ tag }: { tag: string }) {
 const EMPTY_FORM = {
   type: 'expense' as TransactionType,
   amount: '',
-  currency: 'IDR' as CurrencyCode,
   category: 'Food & Dining' as Category,
   date: new Date().toISOString().slice(0, 10),
   description: '',
@@ -407,8 +422,8 @@ function AddTransactionModal({
   }
 
   async function handleSubmit() {
-    const originalAmount = parseFloat(form.amount)
-    if (!form.amount || isNaN(originalAmount) || originalAmount <= 0) {
+    const amount = parseFloat(form.amount)
+    if (!form.amount || isNaN(amount) || amount <= 0) {
       setError('Enter a valid amount greater than 0.')
       return
     }
@@ -421,16 +436,9 @@ function AddTransactionModal({
     setIsLoading(true)
 
     try {
-      // Convert to IDR with historical rate tracking
-      const { amountIDR, exchangeRateUsed } = await convertToIDR(originalAmount, form.currency)
-
-      // Prepare complete transaction with all required fields
       const transaction: Omit<Transaction, 'id' | 'createdAt'> = {
         type: form.type,
-        originalAmount,
-        amountIDR,              // For dashboard calculations
-        exchangeRateUsed,       // For historical records
-        currency: form.currency,
+        amount,
         category: form.category,
         date: form.date,
         description: form.description.trim(),
@@ -441,10 +449,11 @@ function AddTransactionModal({
       await onAdd(transaction)
       setForm(EMPTY_FORM)
       setError('')
+      onClose()
       toast.success('✓ Transaction saved!')
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to save transaction'
-      console.error('Conversion or save error:', err)
+      console.error('Save error:', err)
       setError(message)
       toast.error(`✗ ${message}`)
     } finally {
@@ -499,50 +508,19 @@ function AddTransactionModal({
             ))}
           </div>
 
-          {/* Amount */}
+          {/* Amount (IDR) */}
           <div>
-            <label className="block text-xs font-medium text-stone-500 mb-2">Amount</label>
-            <div className="space-y-2">
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 font-mono text-base md:text-sm">
-                  {form.currency === 'IDR' ? 'Rp' : form.currency}
-                </span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  value={form.amount}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, amount: e.target.value }))}
-                  disabled={isLoading}
-                  className="w-full pl-7 pr-3 py-3 md:py-2.5 text-base md:text-sm font-mono border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50 disabled:opacity-50"
-                />
-              </div>
-              {/* Loading Indicator */}
-              {isLoading && (
-                <p className="text-xs text-blue-600 flex items-center gap-2">
-                  <Loader size={14} className="animate-spin" />
-                  Converting exchange rate...
-                </p>
-              )}
-            </div>
-          </div>
-
-          {/* Currency */}
-          <div>
-            <label className="block text-xs font-medium text-stone-500 mb-2">Currency</label>
-            <div className="relative">
-              <select
-                value={form.currency}
-                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setForm(f => ({ ...f, currency: e.target.value as CurrencyCode }))}
-                className="w-full px-3 py-3 md:py-2.5 text-base md:text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50 appearance-none pr-8"
-              >
-                {SUPPORTED_CURRENCIES.map(currency => (
-                  <option key={currency} value={currency}>{currency}</option>
-                ))}
-              </select>
-              <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none" />
-            </div>
+            <label className="block text-xs font-medium text-stone-500 mb-2">Amount (IDR)</label>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              placeholder="0"
+              value={form.amount}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, amount: e.target.value }))}
+              disabled={isLoading}
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base font-mono text-slate-900 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50"
+            />
           </div>
 
           {/* Tags */}
@@ -553,7 +531,7 @@ function AddTransactionModal({
               placeholder="#urgent, #work"
               value={form.tags}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, tags: e.target.value }))}
-              className="w-full px-3 py-3 md:py-2.5 text-base md:text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
 
@@ -564,7 +542,7 @@ function AddTransactionModal({
               <select
                 value={form.category}
                 onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setForm(f => ({ ...f, category: e.target.value as Category }))}
-                className="w-full px-3 py-3 md:py-2.5 text-base md:text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50 appearance-none pr-8"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 appearance-none pr-8"
               >
                 {categories.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
@@ -579,7 +557,7 @@ function AddTransactionModal({
               type="date"
               value={form.date}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, date: e.target.value }))}
-              className="w-full px-3 py-3 md:py-2.5 text-base md:text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
 
@@ -591,7 +569,7 @@ function AddTransactionModal({
               placeholder="What was this for?"
               value={form.description}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, description: e.target.value }))}
-              className="w-full px-3 py-3 md:py-2.5 text-base md:text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
 
@@ -650,8 +628,7 @@ function EditTransactionModal({
 }) {
   const [form, setForm] = useState({
     type: transaction.type,
-    amount: String(transaction.originalAmount ?? transaction.amountIDR),
-    currency: (transaction.currency ?? 'IDR') as CurrencyCode,
+    amount: String(transaction.amount),
     category: transaction.category,
     date: transaction.date,
     description: transaction.description,
@@ -675,8 +652,8 @@ function EditTransactionModal({
   }
 
   async function handleSubmit() {
-    const originalAmount = parseFloat(form.amount)
-    if (!form.amount || isNaN(originalAmount) || originalAmount <= 0) {
+    const amount = parseFloat(form.amount)
+    if (!form.amount || isNaN(amount) || amount <= 0) {
       setError('Enter a valid amount greater than 0.')
       return
     }
@@ -689,17 +666,10 @@ function EditTransactionModal({
     setIsLoading(true)
 
     try {
-      // Convert to IDR with historical rate tracking
-      const { amountIDR, exchangeRateUsed } = await convertToIDR(originalAmount, form.currency)
-
-      // Save updated transaction with all required fields
       await onSave({
         ...transaction,
         type: form.type,
-        originalAmount,
-        amountIDR,            // For dashboard calculations
-        exchangeRateUsed,     // For historical records
-        currency: form.currency,
+        amount,
         category: form.category,
         date: form.date,
         description: form.description.trim(),
@@ -709,7 +679,7 @@ function EditTransactionModal({
       onClose()
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to save transaction'
-      console.error('Conversion or save error:', err)
+      console.error('Save error:', err)
       setError(message)
       toast.error(`✗ ${message}`)
     } finally {
@@ -764,50 +734,19 @@ function EditTransactionModal({
             ))}
           </div>
 
-          {/* Amount */}
+          {/* Amount (IDR) */}
           <div>
-            <label className="block text-xs font-medium text-stone-500 mb-2">Amount</label>
-            <div className="space-y-2">
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 font-mono text-base md:text-sm">
-                  {form.currency === 'IDR' ? 'Rp' : form.currency}
-                </span>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  value={form.amount}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, amount: e.target.value }))}
-                  disabled={isLoading}
-                  className="w-full pl-7 pr-3 py-3 md:py-2.5 text-base md:text-sm font-mono border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50 disabled:opacity-50"
-                />
-              </div>
-              {/* Loading Indicator */}
-              {isLoading && (
-                <p className="text-xs text-blue-600 flex items-center gap-2">
-                  <Loader size={14} className="animate-spin" />
-                  Converting exchange rate...
-                </p>
-              )}
-            </div>
-          </div>
-
-          {/* Currency */}
-          <div>
-            <label className="block text-xs font-medium text-stone-500 mb-2">Currency</label>
-            <div className="relative">
-              <select
-                value={form.currency}
-                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setForm(f => ({ ...f, currency: e.target.value as CurrencyCode }))}
-                className="w-full px-3 py-3 md:py-2.5 text-base md:text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50 appearance-none pr-8"
-              >
-                {SUPPORTED_CURRENCIES.map(currency => (
-                  <option key={currency} value={currency}>{currency}</option>
-                ))}
-              </select>
-              <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 pointer-events-none" />
-            </div>
+            <label className="block text-xs font-medium text-stone-500 mb-2">Amount (IDR)</label>
+            <input
+              type="number"
+              min="0"
+              step="1"
+              placeholder="0"
+              value={form.amount}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, amount: e.target.value }))}
+              disabled={isLoading}
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base font-mono text-slate-900 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50"
+            />
           </div>
 
           {/* Tags */}
@@ -818,7 +757,7 @@ function EditTransactionModal({
               placeholder="#urgent, #work"
               value={form.tags}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, tags: e.target.value }))}
-              className="w-full px-3 py-3 md:py-2.5 text-base md:text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
 
@@ -829,7 +768,7 @@ function EditTransactionModal({
               <select
                 value={form.category}
                 onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setForm(f => ({ ...f, category: e.target.value as Category }))}
-                className="w-full px-3 py-3 md:py-2.5 text-base md:text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50 appearance-none pr-8"
+                className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 appearance-none pr-8"
               >
                 {categories.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
@@ -844,7 +783,7 @@ function EditTransactionModal({
               type="date"
               value={form.date}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, date: e.target.value }))}
-              className="w-full px-3 py-3 md:py-2.5 text-base md:text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
 
@@ -856,7 +795,7 @@ function EditTransactionModal({
               placeholder="What was this for?"
               value={form.description}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, description: e.target.value }))}
-              className="w-full px-3 py-3 md:py-2.5 text-base md:text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 focus:border-transparent bg-stone-50"
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-base transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
 
@@ -913,45 +852,96 @@ function BudgetPanel({ budget, budgetLoading, monthlyExpenses, onUpdate }: {
   onUpdate: (limit: number) => void
 }) {
   const [editing, setEditing] = useState(false)
-  const [input, setInput] = useState(String(budget?.limit ?? 0))
+  const [input, setInput] = useState(budget?.limit ? String(budget.limit) : '')
+  const lastNotifiedThresholdRef = useRef<'safe' | 'warning' | 'critical' | null>(null)
+
+  useEffect(() => {
+    setInput(budget?.limit ? String(budget.limit) : '')
+  }, [budget?.limit])
 
   const pct = budget && budget.limit > 0 ? Math.min((monthlyExpenses / budget.limit) * 100, 100) : 0
   const over = budget && budget.limit > 0 && monthlyExpenses > budget.limit
   const remaining = budget ? budget.limit - monthlyExpenses : 0
 
+  // Calculate budget status
+  const budgetStatus = calculateBudgetStatus(monthlyExpenses, budget?.limit)
+
+  // Handle budget threshold notifications
+  useEffect(() => {
+    if (!budget || budget.limit <= 0) return
+
+    const currentThreshold = budgetStatus.status
+
+    // Only notify when crossing into a new threshold
+    if (currentThreshold !== lastNotifiedThresholdRef.current) {
+      if (currentThreshold === 'critical') {
+        toast.error('🚨 Critical: You have exceeded your budget!')
+      } else if (currentThreshold === 'warning') {
+        toast.warning(`⚠️ ${budgetStatus.message}`)
+      }
+      lastNotifiedThresholdRef.current = currentThreshold
+    }
+  }, [budgetStatus.status, budget?.limit])
+
   function handleSave() {
     const val = parseFloat(input)
-    if (!isNaN(val) && val > 0) onUpdate(val)
-    setEditing(false)
+    if (!isNaN(val) && val > 0) {
+      onUpdate(val)
+      setEditing(false)
+      return
+    }
+    setInput(budget?.limit ? String(budget.limit) : '')
   }
 
   // Show loading state while budget is being fetched
   if (budgetLoading) {
     return (
-      <div className="bg-white rounded-2xl border border-stone-100 p-5 w-full">
+      <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm w-full">
         <div className="flex items-center gap-3">
           <div className="animate-pulse flex-1">
-            <div className="h-4 bg-stone-200 rounded w-1/3 mb-3"></div>
-            <div className="h-8 bg-stone-200 rounded w-1/2"></div>
+            <div className="h-4 bg-slate-200 rounded w-1/3 mb-3"></div>
+            <div className="h-8 bg-slate-200 rounded w-1/2"></div>
           </div>
         </div>
       </div>
     )
   }
 
-  const barColor = pct >= 90 ? 'bg-rose-500' : pct >= 70 ? 'bg-amber-400' : 'bg-emerald-400'
+  // Determine colors based on budget status
+  const statusColors = {
+    safe: {
+      bar: 'bg-emerald-400',
+      text: 'text-emerald-600',
+      bg: 'bg-emerald-50',
+      border: 'border-emerald-100'
+    },
+    warning: {
+      bar: 'bg-amber-400',
+      text: 'text-amber-600',
+      bg: 'bg-amber-50',
+      border: 'border-amber-100'
+    },
+    critical: {
+      bar: 'bg-rose-500',
+      text: 'text-rose-600',
+      bg: 'bg-rose-50',
+      border: 'border-rose-100'
+    }
+  }
+
+  const colors = statusColors[budgetStatus.status]
 
   return (
-    <div className="bg-white rounded-2xl border border-stone-100 p-5 w-full">
+    <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-sm w-full">
       <div className="flex items-center justify-between gap-2 mb-4 flex-wrap">
         <div className="flex items-center gap-2 min-w-0">
           <PiggyBank size={16} className="text-stone-400 flex-shrink-0" />
-          <span className="text-sm font-medium text-stone-700 truncate">Monthly Budget</span>
-          <span className="text-xs text-stone-400 whitespace-nowrap">{new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' })}</span>
+          <span className="text-sm font-medium text-slate-700 truncate">Monthly Budget</span>
+          <span className="text-xs text-slate-400 whitespace-nowrap">{new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' })}</span>
         </div>
         <button
-          onClick={() => { setEditing(e => !e); setInput(String(budget?.limit ?? 0)) }}
-          className="text-xs text-stone-400 hover:text-stone-700 transition-colors font-medium whitespace-nowrap"
+          onClick={() => { setEditing(e => !e); setInput(budget?.limit ? String(budget.limit) : '') }}
+          className="text-xs text-slate-400 hover:text-slate-700 transition-colors font-medium whitespace-nowrap"
         >
           {editing ? 'Cancel' : 'Edit'}
         </button>
@@ -960,19 +950,20 @@ function BudgetPanel({ budget, budgetLoading, monthlyExpenses, onUpdate }: {
       {editing ? (
         <div className="flex flex-col sm:flex-row gap-2 mb-4">
           <div className="relative flex-1">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 font-mono text-base md:text-sm">Rp</span>
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-mono text-base md:text-sm">Rp</span>
             <input
               type="number"
               value={input}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setInput(e.target.value)}
-              className="w-full pl-7 pr-3 py-3 md:py-2 text-base md:text-sm font-mono border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 bg-stone-50"
+              onBlur={handleSave}
+            className="w-full pl-7 pr-3 py-3 md:py-2 text-base md:text-sm font-mono border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50"
               autoFocus
               onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => e.key === 'Enter' && handleSave()}
             />
           </div>
           <button
             onClick={handleSave}
-            className="px-4 py-3 md:py-2 text-base md:text-sm font-medium text-white bg-stone-900 rounded-xl hover:bg-stone-800 transition-colors active:scale-95 whitespace-nowrap min-h-12 md:min-h-auto"
+            className="px-4 py-3 md:py-2 text-base md:text-sm font-medium text-white bg-slate-900 rounded-xl hover:bg-slate-800 transition-colors active:scale-95 whitespace-nowrap min-h-12 md:min-h-auto"
           >
             Save
           </button>
@@ -980,37 +971,53 @@ function BudgetPanel({ budget, budgetLoading, monthlyExpenses, onUpdate }: {
       ) : null}
 
       {!budget || budget.limit === 0 ? (
-        <p className="text-sm text-stone-400 text-center py-4">No budget set. Click Edit to add one.</p>
+        <p className="text-sm text-slate-400 text-center py-4">No budget set. Click Edit to add one.</p>
       ) : (
         <>
           <div className="flex items-baseline justify-between mb-2 gap-2">
-            <span className="font-mono text-lg md:text-xl font-medium text-stone-900 truncate">{fmt(monthlyExpenses)}</span>
-            <span className="text-xs md:text-sm text-stone-400 font-mono whitespace-nowrap">/ {fmt(budget.limit)}</span>
+          <span className="font-mono text-lg md:text-xl font-medium text-slate-900 truncate">{fmt(monthlyExpenses)}</span>
+          <span className="text-xs md:text-sm text-slate-400 font-mono whitespace-nowrap">/ {fmt(budget.limit)}</span>
           </div>
-          <div className="h-2 bg-stone-100 rounded-full overflow-hidden mb-3">
+          <div className="h-2 bg-slate-100 rounded-full overflow-hidden mb-3">
             <div
-              className={`h-full rounded-full transition-all duration-500 ${barColor}`}
+              className={`h-full rounded-full transition-all duration-500 ${colors.bar}`}
               style={{ width: `${pct}%` }}
             />
           </div>
+          
+          {/* Budget Status Alert */}
+          <div className={`px-3 py-2 rounded-lg border ${colors.bg} ${colors.border} mb-3`}>
+            <p className={`text-xs font-medium ${colors.text}`}>
+              {budgetStatus.message}
+            </p>
+          </div>
+
           <div className="flex items-center justify-between text-xs gap-2 flex-wrap">
-            <span className={`font-medium ${over ? 'text-rose-500' : 'text-stone-500'} truncate`}>
+          <span className={`font-medium ${over ? 'text-rose-500' : 'text-slate-500'} truncate`}>
               {over ? `${fmt(Math.abs(remaining))} over budget` : `${fmt(remaining)} remaining`}
             </span>
-            <span className={`font-mono font-medium whitespace-nowrap ${pct >= 90 ? 'text-rose-500' : pct >= 70 ? 'text-amber-500' : 'text-emerald-600'}`}>
+            <span className={`font-mono font-medium whitespace-nowrap ${colors.text}`}>
               {pct.toFixed(1)}%
             </span>
           </div>
-          {!over && pct < 70 && (
-            <div className="mt-3 flex items-center gap-1.5 text-xs text-emerald-600 bg-emerald-50 px-3 py-2 rounded-lg">
+
+          {/* Status-specific recommendations */}
+          {budgetStatus.status === 'safe' && pct < 70 && (
+            <div className="mt-3 flex items-center gap-1.5 text-xs text-emerald-600 bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-100">
               <CheckCircle2 size={12} className="flex-shrink-0" />
               <span className="truncate">On track for this month</span>
             </div>
           )}
-          {over && (
-            <div className="mt-3 flex items-center gap-1.5 text-xs text-rose-500 bg-rose-50 px-3 py-2 rounded-lg">
+          {budgetStatus.status === 'warning' && (
+            <div className="mt-3 flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 px-3 py-2 rounded-lg border border-amber-100">
+              <AlertCircle size={12} className="flex-shrink-0" />
+              <span className="truncate">Review your spending before it gets critical</span>
+            </div>
+          )}
+          {budgetStatus.status === 'critical' && (
+            <div className="mt-3 flex items-center gap-1.5 text-xs text-rose-600 bg-rose-50 px-3 py-2 rounded-lg border border-rose-100">
               <TrendingDown size={12} className="flex-shrink-0" />
-              <span className="truncate">Budget exceeded — review your expenses</span>
+              <span className="truncate">You must reduce expenses immediately</span>
             </div>
           )}
         </>
@@ -1023,12 +1030,12 @@ function BudgetPanel({ budget, budgetLoading, monthlyExpenses, onUpdate }: {
 
 function CategoryBreakdown({ transactions }: { transactions: Transaction[] }) {
   const expenses = transactions.filter(t => t.type === 'expense')
-  const total = expenses.reduce((s, t) => s + t.amountIDR, 0)
+  const total = expenses.reduce((s, t) => s + t.amount, 0)
 
   const byCategory = useMemo(() => {
     const map: Record<string, number> = {}
     for (const t of expenses) {
-      map[t.category] = (map[t.category] ?? 0) + t.amountIDR
+      map[t.category] = (map[t.category] ?? 0) + t.amount
     }
     return Object.entries(map)
       .sort(([, a], [, b]) => b - a)
@@ -1218,7 +1225,7 @@ function TransactionRow({
     (transactionDate.getFullYear() === currentDate.getFullYear() && transactionDate.getMonth() < currentDate.getMonth())
 
   return (
-    <div className="flex items-center gap-3 py-4 md:py-3 px-4 hover:bg-stone-50 rounded-xl transition-colors group active:bg-stone-50">
+    <div className="flex items-center gap-3 py-4 md:py-3 px-4 hover:bg-slate-50 rounded-xl transition-colors group active:bg-slate-50">
       <div className="flex-shrink-0">
         <input
           type="checkbox"
@@ -1229,12 +1236,12 @@ function TransactionRow({
         />
       </div>
       <div className={`w-10 h-10 md:w-8 md:h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${
-        t.type === 'income' ? 'bg-emerald-50 text-emerald-600' : 'bg-stone-100 text-stone-500'
+        t.type === 'income' ? 'bg-emerald-50 text-emerald-600' : 'bg-slate-100 text-slate-500'
       }`}>
         {getCategoryIcon(t.category)}
       </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm md:text-base font-medium text-stone-900 truncate">{t.description}</p>
+        <p className="text-sm md:text-base font-medium text-slate-900 truncate">{t.description}</p>
         <div className="flex items-center gap-2 mt-0.5 flex-wrap">
           <CategoryBadge category={t.category} />
           {t.isRecurring && (
@@ -1249,21 +1256,9 @@ function TransactionRow({
         </div>
       </div>
       <div className="flex items-center gap-1 flex-shrink-0">
-        <div className="flex flex-col items-end">
-          <span className={`font-mono text-sm md:text-base font-semibold whitespace-nowrap ${t.type === 'income' ? 'text-emerald-600' : 'text-stone-900'}`}>
-            {t.type === 'income' ? '+' : '-'}{fmtOriginal(t.originalAmount ?? t.amountIDR, (t.currency ?? 'IDR') as CurrencyCode)}
-          </span>
-          {(t.currency ?? 'IDR') !== 'IDR' && (
-            <span className="text-[11px] text-stone-500 font-mono whitespace-nowrap">
-              in IDR: {t.type === 'income' ? '+' : '-'}{fmt(t.amountIDR)}
-            </span>
-          )}
-        </div>
-        {(t.currency ?? 'IDR') !== 'IDR' && (
-          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 text-indigo-600 border border-indigo-100">
-            FX
-          </span>
-        )}
+        <span className={`font-mono text-sm md:text-base font-semibold whitespace-nowrap ${t.type === 'income' ? 'text-emerald-600' : 'text-slate-900'}`}>
+          {t.type === 'income' ? '+' : '-'}{fmt(t.amount)}
+        </span>
         {confirm ? (
           <div className="flex items-center gap-1">
             <button
@@ -1340,10 +1335,7 @@ export default function App() {
   const [bulkMode, setBulkMode] = useState<'recategorize' | 'date' | null>(null)
   const [bulkCategory, setBulkCategory] = useState<Category>(DEFAULT_CATEGORIES[0])
   const [bulkDate, setBulkDate] = useState(new Date().toISOString().slice(0, 10))
-  const [exchangeRates, setExchangeRates] = useState<Record<CurrencyCode, number> | null>(null)
-  const [exchangeRateLastUpdate, setExchangeRateLastUpdate] = useState<number | null>(null)
-  const [isRefreshingRates, setIsRefreshingRates] = useState(false)
-
+  const [showNotificationSettings, setShowNotificationSettings] = useState(false)
   // Month Navigation
   const monthNav = useMonthNavigation()
   const isCurrentMonth = monthNav.selectedMonth === new Date().toISOString().slice(0, 7)
@@ -1383,7 +1375,7 @@ export default function App() {
     setLoading(true)
     setBudgetLoading(true)
     const transactionsRef = doc(db, `users/${user.uid}/data`, 'transactions')
-    const budgetRef = doc(db, `users/${user.uid}/data`, 'budget')
+    const budgetRef = doc(db, `users/${user.uid}/user_settings`, 'budget')
     const categoriesRef = doc(db, `users/${user.uid}/user_settings`, 'categories')
 
     const unsubscribeTransactions = onSnapshot(
@@ -1479,23 +1471,6 @@ export default function App() {
     }
   }, [user, isGuest])
 
-  // Load exchange rates on app startup
-  useEffect(() => {
-    const loadExchangeRates = async () => {
-      try {
-        const result = await batchFetchRates(SUPPORTED_CURRENCIES)
-        setExchangeRates(result.rates)
-        setExchangeRateLastUpdate(result.timestamp)
-        console.log('✓ Exchange rates loaded on startup:', result.rates)
-      } catch (error) {
-        console.error('✗ Failed to load exchange rates on startup:', error)
-        // Will retry when user clicks Refresh or adds a transaction
-      }
-    }
-    
-    loadExchangeRates()
-  }, [])
-
   // Persist data based on auth state
   useEffect(() => {
     if (!user || isGuest) {
@@ -1509,6 +1484,10 @@ export default function App() {
     }
 
     // Authenticated user: persist to Firestore
+    if (loading || budgetLoading) {
+      return
+    }
+
     const persistUserData = async () => {
       try {
         // Save transactions
@@ -1516,14 +1495,6 @@ export default function App() {
           items: transactions,
           updatedAt: Date.now()
         }, { merge: true })
-
-        // Save budget only if it exists
-        if (budget) {
-          await setDoc(doc(db, `users/${user.uid}/data`, 'budget'), {
-            ...budget,
-            updatedAt: Date.now()
-          }, { merge: true })
-        }
 
         // Save categories
         await setDoc(doc(db, `users/${user.uid}/user_settings`, 'categories'), {
@@ -1549,12 +1520,19 @@ export default function App() {
     }, 500)
 
     return () => clearTimeout(debounceTimer)
-  }, [transactions, budget, categories, user, isGuest])
+  }, [transactions, budget, categories, user, isGuest, loading, budgetLoading])
 
   // Auth state listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setUser(user)
+      // Initialize Firebase Messaging for authenticated users
+      if (user) {
+        initializeMessaging(user.uid).catch((error) => {
+          console.warn('⚠️ FCM initialization skipped:', error)
+          // Don't show error to user - FCM is optional
+        })
+      }
       // Note: loading state is handled in the data loading effect
     })
     return unsubscribe
@@ -1569,11 +1547,11 @@ export default function App() {
 
   // Calculate stats based on SELECTED MONTH
   const totalIncome = useMemo(
-    () => monthlyTransactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amountIDR, 0),
+    () => monthlyTransactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0),
     [monthlyTransactions]
   )
   const totalExpenses = useMemo(
-    () => monthlyTransactions.filter(t => t.type === 'expense').reduce((s, t) => s + t.amountIDR, 0),
+    () => monthlyTransactions.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0),
     [monthlyTransactions]
   )
   const balance = totalIncome - totalExpenses
@@ -1635,7 +1613,6 @@ export default function App() {
 
   const addTransaction = useCallback(async (data: Omit<Transaction, 'id' | 'createdAt'>) => {
     try {
-      // Use provided amountIDR and exchangeRateUsed from form/duplicate/repeat
       const t: Transaction = {
         ...data,
         id: crypto.randomUUID(),
@@ -1666,7 +1643,6 @@ export default function App() {
 
   const editTransaction = useCallback(async (updatedTransaction: Transaction) => {
     try {
-      // Use provided amountIDR and exchangeRateUsed from form
       setTransactions(prev =>
         prev.map(t => t.id === updatedTransaction.id ? updatedTransaction : t)
       )
@@ -1678,7 +1654,7 @@ export default function App() {
     }
   }, [])
 
-  const updateBudget = useCallback((limit: number) => {
+  const saveBudget = useCallback((limit: number) => {
     const newBudget: Budget = { limit, month: currentMonth() }
     
     // Set state
@@ -1689,7 +1665,7 @@ export default function App() {
     
     // For Firebase users, also save to Firestore asynchronously
     if (user && !isGuest) {
-      const budgetRef = doc(db, `users/${user.uid}/data`, 'budget')
+      const budgetRef = doc(db, `users/${user.uid}/user_settings`, 'budget')
       setDoc(budgetRef, { ...newBudget, updatedAt: Date.now() }, { merge: true })
         .then(() => console.log('✓ Budget persisted to Firestore'))
         .catch(error => {
@@ -1703,10 +1679,7 @@ export default function App() {
     // Create duplicate data with today's date
     const duplicatedData = {
       type: transaction.type,
-      originalAmount: transaction.originalAmount,
-      amountIDR: transaction.amountIDR,
-      exchangeRateUsed: transaction.exchangeRateUsed,
-      currency: transaction.currency,
+      amount: transaction.amount,
       category: transaction.category,
       date: new Date().toISOString().slice(0, 10), // Today's date
       description: transaction.description,
@@ -1724,10 +1697,7 @@ export default function App() {
     // Create repeat data with today's date (for current month)
     const repeatedData = {
       type: transaction.type,
-      originalAmount: transaction.originalAmount,
-      amountIDR: transaction.amountIDR,
-      exchangeRateUsed: transaction.exchangeRateUsed,
-      currency: transaction.currency,
+      amount: transaction.amount,
       category: transaction.category,
       date: new Date().toISOString().slice(0, 10), // Today's date (current month)
       description: transaction.description,
@@ -1912,24 +1882,6 @@ export default function App() {
     }
   }, [selectedIds, transactions, bulkDate, user, isGuest, clearSelection])
 
-  // Refresh exchange rates
-  const handleRefreshExchangeRates = useCallback(async () => {
-    setIsRefreshingRates(true)
-    try {
-      // Fetch fresh rates for all supported currencies
-      const result = await batchFetchRates(SUPPORTED_CURRENCIES)
-      setExchangeRates(result.rates)
-      setExchangeRateLastUpdate(result.timestamp)
-      toast.success('✓ Exchange rates updated successfully!')
-      console.log('✓ Exchange rates refreshed:', result.rates)
-    } catch (error) {
-      console.error('✗ Error refreshing exchange rates:', error)
-      toast.error('✗ Failed to refresh exchange rates')
-    } finally {
-      setIsRefreshingRates(false)
-    }
-  }, [])
-
   // Export transactions to CSV
   const exportToCSV = useCallback(() => {
     if (monthlyTransactions.length === 0) {
@@ -1945,7 +1897,7 @@ export default function App() {
       t.date,
       `"${t.description.replace(/"/g, '""')}"`, // Escape quotes
       t.category,
-      t.amountIDR.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 }),
+      t.amount.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 }),
       t.type,
     ])
 
@@ -2073,12 +2025,23 @@ export default function App() {
                           <p className="text-xs text-stone-500 truncate">{user.email || ''}</p>
                         </div>
                       </div>
-                      <button
-                        onClick={handleSignOut}
-                        className="text-xs text-stone-400 hover:text-stone-700 transition-colors font-medium whitespace-nowrap"
-                      >
-                        Keluar
-                      </button>
+                      <div className="flex items-center gap-2">
+                        {user && !isGuest && (
+                          <button
+                            onClick={() => setShowNotificationSettings(true)}
+                            className="p-2 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded-lg transition-colors"
+                            title="Notification Settings"
+                          >
+                            <Bell size={18} />
+                          </button>
+                        )}
+                        <button
+                          onClick={handleSignOut}
+                          className="text-xs text-stone-400 hover:text-stone-700 transition-colors font-medium whitespace-nowrap"
+                        >
+                          Keluar
+                        </button>
+                      </div>
                     </div>
                   ) : null}
                   
@@ -2194,7 +2157,7 @@ export default function App() {
                         <select
                           value={filterType}
                           onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setFilterType(e.target.value as typeof filterType)}
-                          className="appearance-none w-full pl-3 pr-8 py-3 md:py-2 text-base md:text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 bg-stone-50 text-stone-700"
+                          className="appearance-none w-full pl-3 pr-8 py-3 md:py-2 text-base md:text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50 text-slate-700 transition-colors"
                         >
                           <option value="all">All types</option>
                           <option value="income">Income</option>
@@ -2207,7 +2170,7 @@ export default function App() {
                         <select
                           value={filterCategory}
                           onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setFilterCategory(e.target.value as Category | 'all')}
-                          className="appearance-none w-full pl-3 pr-8 py-3 md:py-2 text-base md:text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 bg-stone-50 text-stone-700"
+                          className="appearance-none w-full pl-3 pr-8 py-3 md:py-2 text-base md:text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50 text-slate-700 transition-colors"
                         >
                           <option value="all">All categories</option>
                           {categories.map(c => <option key={c} value={c}>{c}</option>)}
@@ -2219,7 +2182,7 @@ export default function App() {
                         <select
                           value={filterTag}
                           onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setFilterTag(e.target.value)}
-                          className="appearance-none w-full pl-3 pr-8 py-3 md:py-2 text-base md:text-sm border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-stone-900 bg-stone-50 text-stone-700"
+                          className="appearance-none w-full pl-3 pr-8 py-3 md:py-2 text-base md:text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-slate-50 text-slate-700 transition-colors"
                         >
                           <option value="all">All tags</option>
                           {usedTags.map(tag => <option key={tag} value={tag}>{tag}</option>)}
@@ -2228,7 +2191,7 @@ export default function App() {
                       </div>
                       <button
                         onClick={() => setShowCategoryManager(true)}
-                        className="px-3 py-3 md:py-2 text-xs font-medium bg-stone-100 text-stone-700 rounded-xl hover:bg-stone-200 transition-colors active:scale-95 whitespace-nowrap"
+                        className="px-3 py-3 md:py-2 text-xs font-medium bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200 transition-colors active:scale-95 whitespace-nowrap"
                       >
                         Manage Categories
                       </button>
@@ -2237,7 +2200,7 @@ export default function App() {
                 </div>
 
                 {/* Transaction List */}
-                <div className="bg-white rounded-2xl border border-stone-100 w-full">
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm w-full">
                   <div className="px-4 pt-4 pb-2 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                       <input
@@ -2245,18 +2208,18 @@ export default function App() {
                         checked={allFilteredSelected}
                         onChange={(e: React.ChangeEvent<HTMLInputElement>) => toggleSelectAllFiltered(e.target.checked)}
                         disabled={filtered.length === 0}
-                        className="w-4 h-4 rounded border-stone-300 text-stone-900 focus:ring-stone-900 cursor-pointer disabled:cursor-not-allowed"
+                        className="w-4 h-4 rounded border-slate-300 text-slate-900 focus:ring-blue-500 cursor-pointer disabled:cursor-not-allowed"
                         aria-label="Select all transactions"
                         title="Select all visible transactions"
                       />
-                      <span className="text-sm font-medium text-stone-700">Transactions</span>
+                      <span className="text-sm font-medium text-slate-700">Transactions</span>
                     </div>
                     <div className="flex items-center gap-3">
-                      <span className="text-xs text-stone-400">{filtered.length} entries</span>
+                      <span className="text-xs text-slate-400">{filtered.length} entries</span>
                       <button
                         onClick={exportToCSV}
                         disabled={monthlyTransactions.length === 0}
-                        className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 disabled:bg-stone-100 disabled:text-stone-400 disabled:cursor-not-allowed transition-colors active:scale-95"
+                        className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed transition-colors active:scale-95"
                         title={`Export ${monthlyTransactions.length} transactions as CSV`}
                       >
                         <Download size={14} />
@@ -2267,11 +2230,11 @@ export default function App() {
                   <div className="divide-y divide-stone-50 px-2 pb-2 max-h-[520px] overflow-y-auto scrollbar-thin">
                     {filtered.length === 0 ? (
                       <div className="flex flex-col items-center justify-center py-16 text-center px-4">
-                        <div className="w-12 h-12 bg-stone-100 rounded-2xl flex items-center justify-center mb-3">
-                          <Wallet size={20} className="text-stone-400" />
+                        <div className="w-12 h-12 bg-slate-100 rounded-2xl flex items-center justify-center mb-3">
+                          <Wallet size={20} className="text-slate-400" />
                         </div>
-                        <p className="text-sm font-medium text-stone-500">No transactions found</p>
-                        <p className="text-xs text-stone-400 mt-1">
+                        <p className="text-sm font-medium text-slate-700">No transactions yet</p>
+                        <p className="text-xs text-slate-400 mt-1">
                           {transactions.length === 0 ? 'Add your first transaction above' : 'Try adjusting your filters'}
                         </p>
                       </div>
@@ -2293,9 +2256,9 @@ export default function App() {
                 </div>
 
                 {selectedIds.length > 0 && (
-                  <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-2xl bg-white border border-stone-200 shadow-lg rounded-2xl px-4 py-3">
+                  <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[calc(100%-2rem)] max-w-2xl bg-white border border-slate-200 shadow-sm rounded-xl px-4 py-3">
                     <div className="flex flex-wrap items-center gap-2 md:gap-3 justify-between">
-                      <span className="text-sm font-medium text-stone-700">
+                      <span className="text-sm font-medium text-slate-700">
                         {selectedIds.length} selected
                       </span>
                       <div className="flex flex-wrap items-center gap-2">
@@ -2335,54 +2298,10 @@ export default function App() {
                   budget={budget}
                   budgetLoading={budgetLoading}
                   monthlyExpenses={monthlyExpenses}
-                  onUpdate={updateBudget}
+                  onUpdate={saveBudget}
                 />
                  
                 {/* Exchange Rate Info Card */}
-                <div className="bg-white rounded-2xl border border-stone-100 p-4">
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-semibold text-stone-900">💱 Exchange Rates</h3>
-                      <span className="text-xs text-stone-500">
-                        {formatLastUpdate(exchangeRateLastUpdate)}
-                      </span>
-                    </div>
-
-                    {/* Display Exchange Rates */}
-                    {exchangeRates ? (
-                      <div className="space-y-2">
-                        {['USD', 'EUR', 'SGD'].map((currency) => (
-                          <div key={currency} className="flex items-center justify-between text-xs px-2 py-1.5 bg-stone-50 rounded-lg">
-                            <span className="font-medium text-stone-600">{currency}</span>
-                            <span className="font-mono font-semibold text-stone-900">
-                              {fmt(exchangeRates[currency as CurrencyCode] ?? 0)}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-center text-xs text-stone-400 py-3">
-                        Fetching rates...
-                      </div>
-                    )}
-
-                    <button
-                      onClick={handleRefreshExchangeRates}
-                      disabled={isRefreshingRates}
-                      className="w-full px-3 py-2 text-xs font-medium bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 disabled:bg-stone-100 disabled:text-stone-400 disabled:cursor-not-allowed transition-colors active:scale-95"
-                    >
-                      {isRefreshingRates ? (
-                        <span className="flex items-center justify-center gap-2">
-                          <span className="inline-block animate-spin">◌</span>
-                          Updating...
-                        </span>
-                      ) : (
-                        '↻ Refresh Rates'
-                      )}
-                    </button>
-                  </div>
-                </div>
-                 
                 <CategoryBreakdown transactions={monthlyTransactions} />
               </div>
             </div>
@@ -2474,6 +2393,23 @@ export default function App() {
                     Apply
                   </button>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {showNotificationSettings && user && !isGuest && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm px-4">
+              <div className="bg-white rounded-2xl w-full max-w-md shadow-xl p-6 space-y-5 max-h-[90vh] overflow-y-auto">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="font-semibold text-stone-900 text-lg">Notification Settings</h2>
+                  <button
+                    onClick={() => setShowNotificationSettings(false)}
+                    className="w-8 h-8 rounded-lg hover:bg-stone-100 flex items-center justify-center text-stone-400 hover:text-stone-600"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+                <NotificationSettings userId={user.uid} />
               </div>
             </div>
           )}
