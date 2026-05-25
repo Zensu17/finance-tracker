@@ -14,13 +14,14 @@ import LoginScreen from './components/LoginScreen'
 import { useMonthNavigation } from './hooks/useMonthNavigation'
 import { AnalyticsDashboard } from './components/AnalyticsDashboard'
 import { NotificationSettings } from './components/NotificationSettings'
+import { FilterPanel } from './components/FilterPanel'
 import { initializeMessaging } from './utils/notifications'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 type TransactionType = 'income' | 'expense'
 
-type Category = string
+export type Category = string
 
 export interface Transaction {
   id: string
@@ -1336,6 +1337,7 @@ export default function App() {
   const [bulkCategory, setBulkCategory] = useState<Category>(DEFAULT_CATEGORIES[0])
   const [bulkDate, setBulkDate] = useState(new Date().toISOString().slice(0, 10))
   const [showNotificationSettings, setShowNotificationSettings] = useState(false)
+  const [advancedFilteredTransactions, setAdvancedFilteredTransactions] = useState<Transaction[]>([])
   // Month Navigation
   const monthNav = useMonthNavigation()
   const isCurrentMonth = monthNav.selectedMonth === new Date().toISOString().slice(0, 7)
@@ -1566,29 +1568,17 @@ export default function App() {
     return Array.from(tags).sort()
   }, [monthlyTransactions])
 
-  // Filtered + searched transactions (use monthly transactions)
-  const filtered = useMemo(() => {
-    return monthlyTransactions
-      .filter(t => {
-        if (filterType !== 'all' && t.type !== filterType) return false
-        if (filterCategory !== 'all' && t.category !== filterCategory) return false
-        if (filterTag !== 'all' && !(t.tags ?? []).includes(filterTag)) return false
-        if (search.trim()) {
-          const q = search.toLowerCase()
-          const inTags = ((t.tags ?? []) as string[]).some((tag: string) => tag.toLowerCase().includes(q))
-          return t.description.toLowerCase().includes(q) || t.category.toLowerCase().includes(q) || inTags
-        }
-        return true
-      })
-      .sort((a, b) => b.createdAt - a.createdAt)
-  }, [monthlyTransactions, filterType, filterCategory, filterTag, search])
+  // Initialize advanced filtered transactions on month/transaction change
+  useEffect(() => {
+    setAdvancedFilteredTransactions(monthlyTransactions)
+  }, [monthlyTransactions])
 
   useEffect(() => {
     const validIds = new Set(monthlyTransactions.map(t => t.id))
     setSelectedIds(prev => prev.filter(id => validIds.has(id)))
   }, [monthlyTransactions])
 
-  const allFilteredSelected = filtered.length > 0 && filtered.every(t => selectedIds.includes(t.id))
+  const allFilteredSelected = advancedFilteredTransactions.length > 0 && advancedFilteredTransactions.every(t => selectedIds.includes(t.id))
 
   const toggleSelectTransaction = useCallback((id: string) => {
     setSelectedIds(prev => (
@@ -1597,7 +1587,7 @@ export default function App() {
   }, [])
 
   const toggleSelectAllFiltered = useCallback((checked: boolean) => {
-    const filteredIds = filtered.map(t => t.id)
+    const filteredIds = advancedFilteredTransactions.map(t => t.id)
     setSelectedIds(prev => {
       if (checked) {
         return Array.from(new Set([...prev, ...filteredIds]))
@@ -1605,7 +1595,7 @@ export default function App() {
       const filteredSet = new Set(filteredIds)
       return prev.filter(id => !filteredSet.has(id))
     })
-  }, [filtered])
+  }, [advancedFilteredTransactions])
 
   const clearSelection = useCallback(() => {
     setSelectedIds([])
@@ -2199,6 +2189,13 @@ export default function App() {
                   </div>
                 </div>
 
+                {/* Advanced Filter Panel */}
+                <FilterPanel
+                  transactions={monthlyTransactions}
+                  categories={categories}
+                  onFilterChange={setAdvancedFilteredTransactions}
+                />
+
                 {/* Transaction List */}
                 <div className="bg-white rounded-xl border border-slate-200 shadow-sm w-full">
                   <div className="px-4 pt-4 pb-2 flex items-center justify-between">
@@ -2207,7 +2204,7 @@ export default function App() {
                         type="checkbox"
                         checked={allFilteredSelected}
                         onChange={(e: React.ChangeEvent<HTMLInputElement>) => toggleSelectAllFiltered(e.target.checked)}
-                        disabled={filtered.length === 0}
+                        disabled={advancedFilteredTransactions.length === 0}
                         className="w-4 h-4 rounded border-slate-300 text-slate-900 focus:ring-blue-500 cursor-pointer disabled:cursor-not-allowed"
                         aria-label="Select all transactions"
                         title="Select all visible transactions"
@@ -2215,7 +2212,7 @@ export default function App() {
                       <span className="text-sm font-medium text-slate-700">Transactions</span>
                     </div>
                     <div className="flex items-center gap-3">
-                      <span className="text-xs text-slate-400">{filtered.length} entries</span>
+                      <span className="text-xs text-slate-400">{advancedFilteredTransactions.length} entries</span>
                       <button
                         onClick={exportToCSV}
                         disabled={monthlyTransactions.length === 0}
@@ -2228,19 +2225,21 @@ export default function App() {
                     </div>
                   </div>
                   <div className="divide-y divide-stone-50 px-2 pb-2 max-h-[520px] overflow-y-auto scrollbar-thin">
-                    {filtered.length === 0 ? (
+                    {advancedFilteredTransactions.length === 0 ? (
                       <div className="flex flex-col items-center justify-center py-16 text-center px-4">
                         <div className="w-12 h-12 bg-slate-100 rounded-2xl flex items-center justify-center mb-3">
                           <Wallet size={20} className="text-slate-400" />
                         </div>
-                        <p className="text-sm font-medium text-slate-700">No transactions yet</p>
-                        <p className="text-xs text-slate-400 mt-1">
-                          {transactions.length === 0 ? 'Add your first transaction above' : 'Try adjusting your filters'}
-                        </p>
+                       <p className="text-sm font-medium text-slate-700">
+                         {advancedFilteredTransactions.length === 0 && monthlyTransactions.length > 0 ? 'No transactions match your filters' : 'No transactions yet'}
+                       </p>
+                       <p className="text-xs text-slate-400 mt-1">
+                         {transactions.length === 0 ? 'Add your first transaction above' : 'Try adjusting your criteria'}
+                       </p>
                       </div>
                     ) : (
-                      filtered.map(t => (
-                       <TransactionRow
+                      advancedFilteredTransactions.map(t => (
+                      <TransactionRow
                          key={t.id}
                          t={t}
                          selected={selectedIds.includes(t.id)}
